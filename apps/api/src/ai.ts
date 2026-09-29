@@ -14,7 +14,7 @@ export interface AiSettings {
   systemPrompt?: string
 }
 
-export const DEFAULT_AI_MODEL = "gpt-6-luna"
+export const DEFAULT_AI_MODEL = "gpt-4o-mini"
 export const DEFAULT_AI_BASE_URL = "https://api.openai.com/v1"
 export const DEFAULT_AI_SYSTEM =
   "你是知识图谱的信息抽取器。根据内容生成节点元数据。" +
