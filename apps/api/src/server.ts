@@ -781,11 +781,13 @@ const routes: Array<{
       const inheritFromNodeId = typeof body.inheritFromNodeId === "string" ? body.inheritFromNodeId.trim()
         : typeof body.seedFromNodeId === "string" ? body.seedFromNodeId.trim() : ""
       const source = inheritFromNodeId ? store.node(inheritFromNodeId) : undefined
-      const inherited = source?.opencodeSessionId ? await messagesOf(source) : []
-      const parentTokens = inherited.reduce((sum, message) => sum + estimate(message.text), 0)
       const requestedMode = body.inheritMode === "fork" || body.inheritMode === "seed" ? body.inheritMode
         : typeof body.seedFromNodeId === "string" ? "seed" : "auto"
-      const inheritFork = inherited.length > 0 && (requestedMode === "fork" || (requestedMode === "auto" && parentTokens <= inheritForkLimit()))
+      // 用节点累计的 tokenCount 判定 fork / seed：不要为了决策去拉取整段父会话消息，
+      // 父节点上下文一长，messagesOf 的开销会随之线性增长，新建子节点会卡很久。
+      const parentTokens = source?.tokenCount ?? 0
+      const inheritFork = Boolean(source?.opencodeSessionId) &&
+        (requestedMode === "fork" || (requestedMode === "auto" && parentTokens > 0 && parentTokens <= inheritForkLimit()))
 
       let session: Awaited<ReturnType<typeof runtime.createSession>>
       if (inheritFork) {
@@ -808,13 +810,18 @@ const routes: Array<{
       if (inheritFromNodeId && source?.opencodeSessionId) {
         if (inheritFork) {
           node = store.patchNode(node.id, { meta: { ...node.meta, forkedFrom: source.id } }) ?? node
-        } else if (inherited.length) {
-          const seedText = seedBlock("inherit", source.title, inheritedSeedBody(source, inherited))
-          await runtime.seed(session.id, seedText)
-          node = store.patchNode(node.id, {
-            meta: { ...node.meta, seededFrom: source.id },
-            tokenCount: node.tokenCount + estimate(seedText),
-          }) ?? node
+        } else {
+          // 种子正文优先取父节点摘要；只有没有摘要时才逐条读取消息（较慢，但已非默认路径）。
+          const summary = source.summaries.at(-1)?.text?.trim()
+          const inherited = summary ? [] : await messagesOf(source)
+          if (summary || inherited.length) {
+            const seedText = seedBlock("inherit", source.title, inheritedSeedBody(source, inherited))
+            await runtime.seed(session.id, seedText)
+            node = store.patchNode(node.id, {
+              meta: { ...node.meta, seededFrom: source.id },
+              tokenCount: node.tokenCount + estimate(seedText),
+            }) ?? node
+          }
         }
         return json(node, 201)
       }
