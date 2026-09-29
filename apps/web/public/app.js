@@ -6954,23 +6954,32 @@ function reloadNotebookDoc(viewer) {
   }
 }
 
-/** 标题内联改名：Enter 提交、Esc 取消；restore 用于放弃或失败时回退显示。 */
+/**
+ * 标题内联改名：Enter 提交、Esc 取消、失焦提交；restore 用于放弃或失败时回退显示。
+ * 用真实 <input> 编辑而不是 contenteditable：后者在中文输入法下会把候选未上屏的
+ * Enter 当成提交，还会把组合过程混入空格，导致“没打完就提交、名字带空格”。
+ */
 function startTitleRename(titleEl, nodeId, fallback, restore) {
-  if (!titleEl || titleEl.isContentEditable) return
-  const original = state.nodesById.get(nodeId)?.title || fallback
-  titleEl.contentEditable = "true"
-  titleEl.focus()
-  const range = document.createRange()
-  range.selectNodeContents(titleEl)
-  const selection = window.getSelection()
-  selection.removeAllRanges()
-  selection.addRange(range)
+  if (!titleEl || titleEl.dataset.renaming === "1") return
+  const original = state.nodesById.get(nodeId)?.title || fallback || ""
+  const input = document.createElement("input")
+  input.type = "text"
+  input.className = "title-rename-input"
+  input.value = original
+  input.setAttribute("aria-label", "重命名")
+  titleEl.dataset.renaming = "1"
+  // hidden 属性会被 .inspector-title 的 display:block 覆盖，这里用内联样式隐藏。
+  titleEl.style.display = "none"
+  titleEl.after(input)
+
+  let finished = false
   const finish = async (commit) => {
-    if (!titleEl.isContentEditable) return
-    titleEl.contentEditable = "false"
-    titleEl.onblur = null
-    titleEl.onkeydown = null
-    const value = titleEl.textContent.trim()
+    if (finished) return
+    finished = true
+    const value = input.value.trim()
+    input.remove()
+    delete titleEl.dataset.renaming
+    titleEl.style.display = ""
     if (!commit || !value || value === original) {
       restore()
       return
@@ -6986,11 +6995,16 @@ function startTitleRename(titleEl, nodeId, fallback, restore) {
       statusEl.textContent = "改名失败: " + error.message
     }
   }
-  titleEl.onblur = () => finish(true)
-  titleEl.onkeydown = (event) => {
-    if (event.key === "Enter") { event.preventDefault(); event.stopPropagation(); finish(true) }
-    else if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); finish(false) }
-  }
+
+  input.addEventListener("keydown", (event) => {
+    // 组合输入中的 Enter / Esc 属于输入法上屏，不能当作提交或取消。
+    if (event.isComposing || event.keyCode === 229) return
+    if (event.key === "Enter") { event.preventDefault(); event.stopPropagation(); void finish(true) }
+    else if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); void finish(false) }
+  })
+  input.addEventListener("blur", () => void finish(true))
+  input.focus()
+  input.select()
 }
 
 function startNotebookRename(viewer) {

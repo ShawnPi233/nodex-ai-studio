@@ -250,7 +250,11 @@
   .context-viewer-title, .notebook-viewer-title { user-select: none; }
   .notebook-viewer-title-block { flex: 1; min-width: 0; }
   .notebook-viewer-title-block .notebook-viewer-title { flex: 0 1 auto; }
-  .inspector-title[contenteditable="true"] { outline: 1px solid #6366f1; border-radius: 4px; padding: 0 4px; }
+  .title-rename-input {
+    flex: 0 1 auto; min-width: 90px; max-width: 260px; font: inherit; font-size: 13px; font-weight: 600;
+    color: #e6e8ee; background: #1b2030; border: 1px solid #6366f1; border-radius: 4px; padding: 1px 6px;
+  }
+  body[data-theme-base="light"] .title-rename-input { color: #1f2937; background: #ffffff; border-color: #4f46e5; }
   .context-viewer-rename, .notebook-viewer-rename { padding: 2px 5px; font-size: 12px; }
   .notebook-viewer-color {
     width: 20px; height: 20px; padding: 0; border: none; border-radius: 4px;
