@@ -1,0 +1,21 @@
+{
+  "name": "nodex",
+  "private": true,
+  "version": "0.0.1",
+  "description": "NodeX - graph-canvas AI conversation and knowledge system",
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "bash scripts/dev.sh",
+    "demo": "bash scripts/demo.sh",
+    "api": "bun run apps/api/src/server.ts",
+    "web": "bun run apps/web/src/dev.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0"
+  }
+}

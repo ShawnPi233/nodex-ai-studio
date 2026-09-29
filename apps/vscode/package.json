@@ -1,0 +1,125 @@
+{
+  "name": "nodex-vscode",
+  "displayName": "NodeX",
+  "description": "NodeX 图谱画布工作台，内嵌在 VS Code 中。",
+  "version": "0.0.1",
+  "publisher": "nodex",
+  "private": true,
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Machine Learning",
+    "Other"
+  ],
+  "keywords": [
+    "ai",
+    "agent",
+    "opencode",
+    "nodex",
+    "graph"
+  ],
+  "icon": "media/icon.png",
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onView:nodex.canvas",
+    "onCommand:nodex.openCanvas"
+  ],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "nodex",
+          "title": "NodeX",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "nodex": [
+        {
+          "type": "webview",
+          "id": "nodex.canvas",
+          "name": "NodeX"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "nodex.openCanvas",
+        "category": "NodeX",
+        "title": "在编辑器打开画布"
+      },
+      {
+        "command": "nodex.openInBrowser",
+        "category": "NodeX",
+        "title": "在浏览器打开"
+      },
+      {
+        "command": "nodex.restartServer",
+        "category": "NodeX",
+        "title": "重启本地服务"
+      },
+      {
+        "command": "nodex.showStatus",
+        "category": "NodeX",
+        "title": "显示服务状态"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "nodex.openCanvas",
+          "when": "view == nodex.canvas",
+          "group": "navigation@1"
+        },
+        {
+          "command": "nodex.restartServer",
+          "when": "view == nodex.canvas",
+          "group": "navigation@2"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "NodeX",
+      "properties": {
+        "nodex.webUrl": {
+          "type": "string",
+          "default": "",
+          "description": "已在运行的 NodeX 网页地址；留空则按端口探测或自动拉起本地服务。"
+        },
+        "nodex.repoPath": {
+          "type": "string",
+          "default": "",
+          "description": "NodeX 仓库根目录；自动拉起本地服务时使用，留空则尝试扩展安装位置与当前工作区。"
+        },
+        "nodex.bunPath": {
+          "type": "string",
+          "default": "",
+          "description": "bun 可执行文件路径；留空则用 PATH 中的 bun 或仓库内 .tools/bin/bun。"
+        },
+        "nodex.opencodeUrl": {
+          "type": "string",
+          "default": "",
+          "description": "OpenCode Server 地址；留空则探测 4096 / 4199。"
+        },
+        "nodex.autoStart": {
+          "type": "boolean",
+          "default": true,
+          "description": "找不到运行中的 NodeX 时，自动拉起 API 与网页服务。"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "bun build src/extension.ts --outfile=dist/extension.js --external vscode --target=node --format=cjs",
+    "watch": "bun build src/extension.ts --outfile=dist/extension.js --external vscode --target=node --format=cjs --watch",
+    "package": "bun run build && bun ./node_modules/@vscode/vsce/vsce package --no-dependencies --allow-missing-repository"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "2.32.0"
+  }
+}

@@ -1,0 +1,30 @@
+node_modules/
+dist/
+runs/
+.tools/
+*.log
+.env*
+!.env.example
+*.pem
+*.key
+.DS_Store
+*.tsbuildinfo
+.fvtest*/
+test-data/
+.vscode/
+.idea/
+
+# ---- Internal design / working docs (kept local, not published) ----
+CONTEXT.md
+docs/
+
+# ---- Tests (kept local, not published) ----
+**/test/
+**/*.test.ts
+**/*.test.js
+
+# ---- Runtime probe / inspection scripts ----
+packages/runtime-opencode/scripts/
+
+# VS Code extension artifacts
+*.vsix

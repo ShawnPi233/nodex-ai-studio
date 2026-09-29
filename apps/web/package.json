@@ -1,0 +1,15 @@
+{
+  "name": "@nodex/web",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun run src/dev.ts"
+  },
+  "dependencies": {
+    "dompurify": "^3.4.15",
+    "katex": "^0.18.9",
+    "marked": "^18.0.14",
+    "monaco-editor": "0.52.2"
+  }
+}
