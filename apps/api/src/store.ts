@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs"
+import { mkdirSync, readFileSync, renameSync, writeFileSync, existsSync } from "node:fs"
 import { dirname, resolve } from "node:path"
 import type { GraphLink, GraphNode, Workspace, WorkspaceMember } from "@nodex/domain"
 
@@ -107,21 +107,74 @@ function migrateGraph(raw: unknown): PersistedGraph {
 
 export class GraphStore {
   private data: PersistedGraph = structuredClone(EMPTY)
+  /** 密钥单独存放，避免随图谱一起被读取、备份或误提交。 */
+  private readonly secretsFile: string
+  /** 上次写入内容，用于跳过无变化的重复写。 */
+  private lastWritten = ""
 
   constructor(private readonly file: string) {
+    this.secretsFile = resolve(dirname(file), "secrets.json")
     if (existsSync(file)) {
       try {
         this.data = migrateGraph(JSON.parse(readFileSync(file, "utf8")))
+        this.lastWritten = JSON.stringify(this.data)
       } catch {
         this.data = structuredClone(EMPTY)
       }
     }
+    this.migrateSecrets()
   }
 
+  /** 读取本地密钥文件；不存在或损坏时返回空对象。 */
+  private readSecrets(): Record<string, unknown> {
+    try {
+      return existsSync(this.secretsFile) ? JSON.parse(readFileSync(this.secretsFile, "utf8")) : {}
+    } catch {
+      return {}
+    }
+  }
+
+  /** 原子写入密钥文件，权限收紧到 0600。 */
+  private writeSecrets(secrets: Record<string, unknown>): void {
+    mkdirSync(dirname(this.secretsFile), { recursive: true })
+    const tmp = `${this.secretsFile}.${process.pid}.tmp`
+    writeFileSync(tmp, JSON.stringify(secrets), { mode: 0o600 })
+    renameSync(tmp, this.secretsFile)
+  }
+
+  /** NodeX 直连模型使用的 API Key；只存于 secrets.json，不进入 graph.json。 */
+  aiApiKey(): string {
+    const value = this.readSecrets().aiApiKey
+    return typeof value === "string" ? value : ""
+  }
+
+  setAiApiKey(key?: string): void {
+    const secrets = this.readSecrets()
+    if (key) secrets.aiApiKey = key
+    else delete secrets.aiApiKey
+    this.writeSecrets(secrets)
+  }
+
+  /** 迁移：把旧版 graph.json 里的 settings.ai.apiKey 搬到 secrets.json 并抹除。 */
+  private migrateSecrets(): void {
+    const ai = this.data.settings?.ai
+    if (!ai || typeof ai.apiKey !== "string" || !ai.apiKey) return
+    if (!this.aiApiKey()) this.writeSecrets({ ...this.readSecrets(), aiApiKey: ai.apiKey })
+    const { apiKey: _drop, ...rest } = ai
+    this.data.settings = { ...this.data.settings, ai: rest }
+    this.persist()
+  }
+
+  /** 紧凑序列化 + 原子写（临时文件 rename），避免半截文件；内容未变则跳过。 */
   private persist() {
     mkdirSync(dirname(this.file), { recursive: true })
     this.data.schemaVersion = GRAPH_SCHEMA_VERSION
-    writeFileSync(this.file, JSON.stringify(this.data, null, 2))
+    const json = JSON.stringify(this.data)
+    if (json === this.lastWritten) return
+    const tmp = `${this.file}.${process.pid}.tmp`
+    writeFileSync(tmp, json)
+    renameSync(tmp, this.file)
+    this.lastWritten = json
   }
 
   snapshot(): PersistedGraph {
@@ -218,7 +271,13 @@ export class GraphStore {
   }
 
   patchSettings(patch: Partial<NodexSettings>): NodexSettings {
-    this.data.settings = { ...(this.data.settings ?? {}), ...patch }
+    const next = { ...(this.data.settings ?? {}), ...patch }
+    // apiKey 由 secrets.json 持有，绝不落进 graph.json。
+    if (next.ai) {
+      const { apiKey: _drop, ...rest } = next.ai
+      next.ai = rest
+    }
+    this.data.settings = next
     for (const key of Object.keys(this.data.settings) as (keyof NodexSettings)[]) {
       if (this.data.settings[key] === undefined) delete this.data.settings[key]
     }

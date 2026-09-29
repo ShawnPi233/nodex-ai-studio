@@ -7,6 +7,7 @@ runs/
 !.env.example
 *.pem
 *.key
+secrets.json
 .DS_Store
 *.tsbuildinfo
 .fvtest*/

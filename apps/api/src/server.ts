@@ -204,6 +204,11 @@ function nodeVariant(node: GraphNode): string | undefined {
   return typeof node.meta?.variant === "string" && node.meta.variant.trim() ? node.meta.variant.trim() : undefined
 }
 
+/** 组合图谱设置与本地密钥文件，得到生效的轻量 AI 配置（Key 不落在 graph.json）。 */
+function storeAiSettings(): AiSettings {
+  return { ...(store.settings().ai ?? {}), apiKey: store.aiApiKey() }
+}
+
 /** 文件预览允许的根目录；默认进程工作目录，可用设置或环境变量覆盖。 */
 function filesRoot(): string {
   return store.settings().filesRoot ?? process.env.NODEX_FILES_ROOT ?? process.cwd()
@@ -622,7 +627,7 @@ const routes: Array<{
     pattern: /^\/settings\/ai$/,
     handler: async () => {
       const saved = store.settings().ai ?? {}
-      const resolved = resolveAiSettings(saved)
+      const resolved = resolveAiSettings(storeAiSettings())
       return json({
         baseUrl: saved.baseUrl ?? "",
         model: saved.model ?? "",
@@ -640,7 +645,6 @@ const routes: Array<{
     method: "PUT",
     pattern: /^\/settings\/ai$/,
     handler: async ({ body }) => {
-      const current = store.settings().ai ?? {}
       const ai: AiSettings = {}
       const baseUrl = typeof body?.baseUrl === "string" ? body.baseUrl.trim() : ""
       const model = typeof body?.model === "string" ? body.model.trim() : ""
@@ -648,16 +652,11 @@ const routes: Array<{
       if (baseUrl) ai.baseUrl = baseUrl
       if (model) ai.model = model
       if (systemPrompt) ai.systemPrompt = systemPrompt
-      // apiKey 只写不读：未提交新值时保留原值，clearApiKey 显式清除
-      if (body?.clearApiKey === true) {
-        // 保持 ai.apiKey 为空
-      } else if (typeof body?.apiKey === "string" && body.apiKey.trim()) {
-        ai.apiKey = body.apiKey.trim()
-      } else if (current.apiKey) {
-        ai.apiKey = current.apiKey
-      }
+      // apiKey 只写不读，且单独存到 secrets.json：未提交新值时保留原值，clearApiKey 显式清除。
+      if (body?.clearApiKey === true) store.setAiApiKey(undefined)
+      else if (typeof body?.apiKey === "string" && body.apiKey.trim()) store.setAiApiKey(body.apiKey.trim())
       store.patchSettings({ ai })
-      const resolved = resolveAiSettings(ai)
+      const resolved = resolveAiSettings(storeAiSettings())
       return json({
         ok: true,
         hasApiKey: Boolean(resolved.apiKey),
@@ -672,7 +671,7 @@ const routes: Array<{
     method: "POST",
     pattern: /^\/settings\/ai\/test$/,
     handler: async () => {
-      const resolved = resolveAiSettings(store.settings().ai)
+      const resolved = resolveAiSettings(storeAiSettings())
       try {
         const reply = await aiChat(resolved, { prompt: "只回复两个字：正常", timeoutMs: 30000 })
         return json({ ok: true, model: resolved.model, baseUrl: resolved.baseUrl, reply: reply.slice(0, 100) })
@@ -1477,7 +1476,7 @@ const routes: Array<{
         currentCategory: node.categories.join("、"),
       }
       // 优先用 NodeX 直连模型（与笔记本摘要同一套配置），失败再退回 OpenCode。
-      let meta = await generateMetadataWithAi(resolveAiSettings(store.settings().ai), content, hint).catch(() => null)
+      let meta = await generateMetadataWithAi(resolveAiSettings(storeAiSettings()), content, hint).catch(() => null)
       if (!meta) {
         meta = await generateMetadata(runtime, content, { ...hint, model: resolveModel(body?.model, node) })
       }
@@ -1516,7 +1515,7 @@ const routes: Array<{
       const doc = typeof node.meta?.doc === "string" ? node.meta.doc.trim() : ""
       if (!doc) return json({ error: "笔记本暂无内容，无法生成摘要" }, 400)
 
-      const resolved = resolveAiSettings(store.settings().ai)
+      const resolved = resolveAiSettings(storeAiSettings())
       const meta = await generateMetadataWithAi(resolved, doc, {
         currentTitle: node.title,
       })
@@ -1540,7 +1539,7 @@ const routes: Array<{
       const instruction = typeof body?.instruction === "string" && body.instruction.trim()
         ? body.instruction.trim()
         : "在保持原意的前提下润色，使表达更清晰"
-      const resolved = resolveAiSettings(store.settings().ai)
+      const resolved = resolveAiSettings(storeAiSettings())
       const out = await aiChat(resolved, {
         system: "你是文本编辑助手。严格按照用户的改写指令处理给定文本，只输出改写后的文本，不要解释，不要使用代码块，不要添加额外说明。",
         prompt: `改写指令：${instruction}\n\n需要改写的文本：\n${text}`,
@@ -1562,7 +1561,7 @@ const routes: Array<{
       const instruction = typeof body?.instruction === "string" && body.instruction.trim()
         ? body.instruction.trim()
         : "在保持原意的前提下润色，使表达更清晰"
-      const resolved = resolveAiSettings(store.settings().ai)
+      const resolved = resolveAiSettings(storeAiSettings())
       const out = await aiChat(resolved, {
         system: "你是文本编辑助手。严格按照用户的改写指令处理给定文本，只输出改写后的文本，不要解释，不要使用代码块，不要添加额外说明。",
         prompt: `改写指令：${instruction}\n\n需要改写的文本：\n${text}`,
