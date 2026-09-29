@@ -115,6 +115,8 @@ export async function generateMetadataWithAi(
     .filter(Boolean)
     .join("\n")
 
-  const raw = await aiChat(resolved, { prompt })
+  // 元数据是轻量任务：端点异常时快速失败，让上层及时回退到 OpenCode，
+  // 而不是一直挂到 aiChat 的默认超时。
+  const raw = await aiChat(resolved, { prompt, timeoutMs: 30000 })
   return parseMetadata(raw)
 }

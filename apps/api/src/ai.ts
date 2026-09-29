@@ -14,7 +14,7 @@ export interface AiSettings {
   systemPrompt?: string
 }
 
-export const DEFAULT_AI_MODEL = "gpt-4o-mini"
+export const DEFAULT_AI_MODEL = "gpt-6-luna"
 export const DEFAULT_AI_BASE_URL = "https://api.openai.com/v1"
 export const DEFAULT_AI_SYSTEM =
   "你是知识图谱的信息抽取器。根据内容生成节点元数据。" +
@@ -67,7 +67,8 @@ export function readOpencodeProviderKey(baseUrl?: string): { baseUrl?: string; a
 export function resolveAiSettings(settings: AiSettings = {}, options: { allowOpencodeFallback?: boolean } = {}): ResolvedAi {
   const settingBase = settings.baseUrl?.trim()
   const envBase = process.env.NODEX_AI_BASE_URL?.trim()
-  const baseUrl = [settingBase, envBase].find((value) => value && isHttpUrl(value)) ?? DEFAULT_AI_BASE_URL
+  const explicitBase = [settingBase, envBase].find((value) => value && isHttpUrl(value))
+  let baseUrl = explicitBase ?? DEFAULT_AI_BASE_URL
 
   const settingKey = settings.apiKey?.trim()
   const envKey = process.env.NODEX_AI_API_KEY?.trim()
@@ -75,10 +76,13 @@ export function resolveAiSettings(settings: AiSettings = {}, options: { allowOpe
   let apiKeySource: ResolvedAi["apiKeySource"] = settingKey ? "settings" : envKey ? "env" : "none"
 
   if (!apiKey && (options.allowOpencodeFallback ?? true)) {
-    const fromConfig = readOpencodeProviderKey(baseUrl)
+    const fromConfig = readOpencodeProviderKey(explicitBase)
     if (fromConfig?.apiKey) {
       apiKey = fromConfig.apiKey
       apiKeySource = "opencode"
+      // 借用 OpenCode 的 Key 时，必须一并跟随它配套的 baseURL：
+      // 否则会变成「OpenAI 地址 + 非 OpenAI 模型/密钥」，请求要挂到超时才回退。
+      if (!explicitBase && fromConfig.baseUrl) baseUrl = fromConfig.baseUrl
     }
   }
 

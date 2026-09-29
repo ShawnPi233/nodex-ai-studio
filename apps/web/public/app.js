@@ -8449,7 +8449,7 @@ async function openAiPanel() {
     const [info, settings] = await Promise.all([api("/settings/ai"), api("/settings")])
     document.getElementById("aiModel").value = info.model ?? ""
     document.getElementById("aiBaseUrl").value = info.baseUrl ?? ""
-    document.getElementById("aiModel").placeholder = info.defaults?.model ?? "gpt-4o-mini"
+    document.getElementById("aiModel").placeholder = info.defaults?.model ?? "gpt-6-luna"
     document.getElementById("aiBaseUrl").placeholder = info.defaults?.baseUrl ?? ""
     document.getElementById("contextLimit").value = Math.round((settings.contextLimit ?? 300000) / 1000)
     document.getElementById("autoCompact").checked = settings.autoCompact === true

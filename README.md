@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="logo/nodex.svg" alt="NodeX" width="320" />
+  <img src="statics/images/logo/nodex.svg" alt="NodeX" width="320" />
 </p>
 
 <h1 align="center">NodeX</h1>
@@ -22,6 +22,16 @@
 
 NodeX 把每个 AI 会话变成一个**画布节点**：连线表示引用与派生，页面用于分组，上下文路由决定每次提问会把哪些内容送进模型。模型接入、工具、权限与 MCP 全部复用 [OpenCode](https://opencode.ai)，不重复造轮子。
 
+<p align="center">
+  <img src="statics/images/demo/nodex%20demo.gif" alt="NodeX 演示" width="880" />
+</p>
+
+<p align="center">
+  <img src="statics/images/demo/nodex%20demo2.gif" alt="NodeX 演示 2" width="880" />
+</p>
+
+<p align="center"><a href="statics/videos/nodex%20demo.mp4">▶ 观看完整演示视频</a></p>
+
 ## 特性
 
 - **图形画布**：节点 / 连线 / 页面 / 圈选，缩放平移稳定，位置本地与服务端双重持久化。
@@ -40,7 +50,7 @@ NodeX 把每个 AI 会话变成一个**画布节点**：连线表示引用与派
 ## 快速开始
 
 ```bash
-git clone <this-repo> nodex && cd nodex
+git clone https://github.com/ShawnPi233/nodex-ai-studio.git nodex && cd nodex
 bun install
 ```
 
@@ -120,7 +130,7 @@ bun run package        # 生成 nodex-vscode-*.vsix
 ## 模型与 AI 设置
 
 - 模型清单来自 OpenCode 当前连接的 provider（`/config/providers`），NodeX 不维护模型表、不写你的 OpenCode 配置。优先级：请求参数 > 节点 `meta.model` > NodeX 全局设置 > OpenCode 默认。
-- 笔记本摘要等轻量能力由 NodeX 直连 OpenAI 兼容接口，可在界面「AI 设置」中配置地址、模型与 Key（默认 `https://api.openai.com/v1` / `gpt-4o-mini`）。
+- 笔记本摘要、节点元数据、选中文本改写等轻量能力由 NodeX 直连 OpenAI 兼容接口，可在界面「AI 设置」中配置地址、模型与 Key（默认模型 `gpt-6-luna`）。
 - **密钥隔离**：API Key 只存在本机数据目录的 `graph.json`（`runs/` 已 gitignore，`NODEX_DATA_DIR` 可改），源码与仓库不含密钥，接口只返回脱敏值。
 
 ## 架构

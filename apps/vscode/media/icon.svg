@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="456 30 116 123" width="24" height="24">
-  <!-- NodeX logo mark（取自 logo/nodex.svg 右侧像素标记）。活动栏图标由 VS Code 按主题着色，
+  <!-- NodeX logo mark（取自 statics/images/logo/nodex.svg 右侧像素标记）。活动栏图标由 VS Code 按主题着色，
        故用单色实心剪影。 -->
   <g fill="#C5C5C5">
     <path d="M456 30h26v26h-26z M456 127h26v26h-26z M546 30h26v26h-26z M546 127h26v26h-26z" />

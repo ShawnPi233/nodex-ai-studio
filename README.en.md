@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="logo/nodex.svg" alt="NodeX" width="320" />
+  <img src="statics/images/logo/nodex.svg" alt="NodeX" width="320" />
 </p>
 
 <h1 align="center">NodeX</h1>
@@ -22,6 +22,16 @@
 
 NodeX turns every AI session into a **canvas node**: links express references and derivations, pages group nodes, and context routing decides what actually reaches the model on each turn. Model access, tools, permissions and MCP are all delegated to [OpenCode](https://opencode.ai) — no wheel is reinvented.
 
+<p align="center">
+  <img src="statics/images/demo/nodex%20demo.gif" alt="NodeX demo" width="880" />
+</p>
+
+<p align="center">
+  <img src="statics/images/demo/nodex%20demo2.gif" alt="NodeX demo 2" width="880" />
+</p>
+
+<p align="center"><a href="statics/videos/nodex%20demo.mp4">▶ Watch the full demo video</a></p>
+
 ## Features
 
 - **Graph canvas**: nodes / links / pages / selection, stable zoom & pan, positions persisted locally and server-side.
@@ -40,7 +50,7 @@ NodeX turns every AI session into a **canvas node**: links express references an
 ## Quick Start
 
 ```bash
-git clone <this-repo> nodex && cd nodex
+git clone https://github.com/ShawnPi233/nodex-ai-studio.git nodex && cd nodex
 bun install
 ```
 
@@ -120,7 +130,7 @@ After installing, click the NodeX icon in the activity bar or run the command `N
 ## Models & AI Settings
 
 - The model list comes from the provider currently connected to OpenCode (`/config/providers`); NodeX keeps no model table and never writes your OpenCode config. Precedence: request params > node `meta.model` > NodeX global setting > OpenCode default.
-- Lightweight features such as notebook summaries call an OpenAI-compatible endpoint directly; configure the base URL, model and key under "AI Settings" (defaults: `https://api.openai.com/v1` / `gpt-4o-mini`).
+- Lightweight features such as notebook summaries, node metadata and selected-text rewriting call an OpenAI-compatible endpoint directly; configure the base URL, model and key under "AI Settings" (default model: `gpt-6-luna`).
 - **Secret isolation**: the API key lives only in `graph.json` in the local data directory (`runs/` is gitignored; override with `NODEX_DATA_DIR`). No secrets in the source or repo, and APIs return redacted values only.
 
 ## Architecture
