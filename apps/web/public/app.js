@@ -502,6 +502,7 @@ function renderMarkdown(md) {
   })
   const content = document.createElement("div")
   content.innerHTML = html
+  normalizeAutolinks(content)
   content.querySelectorAll("a[href]").forEach((link) => {
     link.target = "_blank"
     link.rel = "noopener noreferrer"
@@ -533,17 +534,40 @@ document.addEventListener("copy", (event) => {
   event.preventDefault()
 })
 
-/** 把纯文本里的本地文件路径变成可点击元素（点击打开预览并在文件树高亮）。 */
-const FILE_PATH_RE = /((?:~|\.\.?)?\/[A-Za-z0-9._@%+\-]+(?:\/[A-Za-z0-9._@%+\-]+)*\.[A-Za-z0-9]{1,8}|[A-Za-z0-9._@%+\-]+\/[A-Za-z0-9._@%+\-/]*\.[A-Za-z0-9]{1,8})/g
+/**
+ * 纯文本链接识别：按「URL 优先、本地路径其次」的单一令牌匹配，
+ * 避免路径规则把 URL 切碎（旧实现只看前 3 个字符是否 `://`，实际常匹配到
+ * URL 中段，导致 `https://a.com/x.md` 被拆成 `https:/` + 文件路径）。
+ * 依次尝试：带协议 / www. 的 URL → 裸域名+路径 → 绝对路径 → 相对路径。
+ * 扩展名要求以字母开头，避免把 `3.5/2.0` 这类数值当成文件路径。
+ */
+const LINK_TOKEN_RE = /(?:https?:\/\/|www\.)[^\s<>"'`]+|[A-Za-z0-9][A-Za-z0-9._-]*\.[A-Za-z]{2,}\/[^\s<>"'`]*|(?:~|\.\.?)?\/[A-Za-z0-9._@%+\-]+(?:\/[A-Za-z0-9._@%+\-]+)*\.[A-Za-z][A-Za-z0-9]{0,7}|[A-Za-z0-9._@%+\-]+\/[A-Za-z0-9._@%+\-/]*\.[A-Za-z][A-Za-z0-9]{0,7}/g
 
-function linkifyFilePaths(root) {
+/** 自动链接常把紧随其后的中文/全角标点当作 URL 的一部分（`foo.md。后面`），需要截掉。 */
+function trimUrlTail(token) {
+  const ascii = /^[A-Za-z0-9\-._~:/?#\[\]@!$&'()*+,;=%]*/.exec(token)
+  const url = ascii ? ascii[0] : ""
+  return url.replace(/[.,;:!?'"\])]+$/, "")
+}
+
+/** 判断 `example.com/path` 这类无协议写法是否真的像域名（而非 `src/index.ts` 之类的路径）。 */
+function looksLikeDomain(host) {
+  if (!host || host.length > 253) return false
+  const parts = host.split(".")
+  if (parts.length < 2) return false
+  if (!parts.every((part) => /^[A-Za-z0-9-]{1,63}$/.test(part))) return false
+  return /^[A-Za-z]{2,}$/.test(parts[parts.length - 1])
+}
+
+/** 把纯文本里的 URL 与本地文件路径变成可点击元素（URL 走系统浏览器，路径打开预览）。 */
+function linkifyText(root) {
   if (!root || !root.querySelectorAll) return
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
     acceptNode(node) {
       const parent = node.parentElement
-      if (!parent || parent.closest("a, .nodex-path, textarea, input, script, style")) return NodeFilter.FILTER_REJECT
-      if (!node.nodeValue || !node.nodeValue.includes("/")) return NodeFilter.FILTER_REJECT
-      return NodeFilter.FILTER_ACCEPT
+      // 代码块 / 行内代码 / 公式里的文本不做链接化：那里的斜杠和点不是链接。
+      if (!parent || parent.closest("a, code, pre, .nodex-path, .nx-math, textarea, input, script, style")) return NodeFilter.FILTER_REJECT
+      return node.nodeValue ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT
     },
   })
   const targets = []
@@ -551,27 +575,62 @@ function linkifyFilePaths(root) {
   while ((current = walker.nextNode())) targets.push(current)
   for (const node of targets) {
     const text = node.nodeValue
-    FILE_PATH_RE.lastIndex = 0
-    if (!FILE_PATH_RE.test(text)) continue
-    FILE_PATH_RE.lastIndex = 0
+    LINK_TOKEN_RE.lastIndex = 0
+    if (!LINK_TOKEN_RE.test(text)) continue
+    LINK_TOKEN_RE.lastIndex = 0
     const frag = document.createDocumentFragment()
     let last = 0
     let match
-    while ((match = FILE_PATH_RE.exec(text))) {
-      if (/:\/\/$/.test(text.slice(Math.max(0, match.index - 3), match.index))) continue
-      frag.append(document.createTextNode(text.slice(last, match.index)))
-      const span = document.createElement("span")
-      span.className = "nodex-path"
-      span.dataset.path = match[1]
-      span.textContent = match[1]
-      span.title = `打开 ${match[1]}`
-      frag.append(span)
-      last = match.index + match[1].length
+    while ((match = LINK_TOKEN_RE.exec(text))) {
+      const token = match[0]
+      const isUrl = /^(?:https?:\/\/|www\.)/i.test(token) || looksLikeDomain(token.split("/")[0])
+      const value = isUrl ? trimUrlTail(token) : token
+      if (match.index > last) frag.append(document.createTextNode(text.slice(last, match.index)))
+      if (isUrl) {
+        if (value) {
+          const a = document.createElement("a")
+          a.href = /^https?:\/\//i.test(value) ? value : /^www\./i.test(value) ? `http://${value}` : `https://${value}`
+          a.textContent = value
+          a.target = "_blank"
+          a.rel = "noopener noreferrer"
+          frag.append(a)
+        }
+      } else {
+        const span = document.createElement("span")
+        span.className = "nodex-path"
+        span.dataset.path = value
+        span.textContent = value
+        span.title = `打开 ${value}`
+        frag.append(span)
+      }
+      last = match.index + (value ? value.length : token.length)
+      // URL 尾部被截掉时，从截断处继续扫描，剩余文字仍可能包含其他链接。
+      if (value.length !== token.length) LINK_TOKEN_RE.lastIndex = last
     }
     if (last === 0) continue
     frag.append(document.createTextNode(text.slice(last)))
     node.parentNode.replaceChild(frag, node)
   }
+}
+
+/**
+ * 修正已生成的自动链接：marked 会把 URL 后面紧邻的中文一起吞进 href
+ * （`https://a.com/x.md。后面` → href 含 `。后面`）。仅处理文本等于 href 的自动链接，
+ * 手写 Markdown 链接 [文本](url) 不受影响。
+ */
+function normalizeAutolinks(root) {
+  root.querySelectorAll("a[href]").forEach((link) => {
+    const href = link.getAttribute("href") ?? ""
+    const text = link.textContent ?? ""
+    let decoded = href
+    try { decoded = decodeURI(href) } catch { /* 非法编码时按原样比较 */ }
+    if (!text || text !== decoded) return
+    const clean = trimUrlTail(text)
+    if (!clean || clean === text) return
+    link.setAttribute("href", clean)
+    link.textContent = clean
+    link.after(document.createTextNode(text.slice(clean.length)))
+  })
 }
 
 async function revealFsPath(path) {
@@ -3854,7 +3913,7 @@ async function reloadContextViewer(nodeId) {
       </div>
     `
     applyViewOptions(viewer)
-    body.querySelectorAll(".msg-text").forEach(linkifyFilePaths)
+    body.querySelectorAll(".msg-text").forEach(linkifyText)
     updateContextExport(viewer)
     const loadError = detail.messagesError || c.error
     if (loadError) {
@@ -3990,7 +4049,7 @@ async function sendContextMessage(viewer, { fromQueue = false } = {}) {
     if (!reply?.isConnected || !rawReply) return
     const follow = body.scrollHeight - body.scrollTop - body.clientHeight < 96
     reply.innerHTML = renderMarkdown(rawReply)
-    linkifyFilePaths(reply)
+    linkifyText(reply)
     assistant.classList.add("has-text")
     if (follow) body.scrollTop = body.scrollHeight
   }
