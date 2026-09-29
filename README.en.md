@@ -11,6 +11,10 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/ShawnPi233/nodex-ai-studio/actions/workflows/ci.yml"><img src="https://github.com/ShawnPi233/nodex-ai-studio/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+</p>
+
+<p align="center">
   <a href="#quick-start">Quick Start</a> ·
   <a href="#connecting-to-opencode">Connecting to OpenCode</a> ·
   <a href="#architecture">Architecture</a> ·
@@ -30,7 +34,7 @@ NodeX turns every AI session into a **canvas node**: links express references an
   <img src="statics/images/demo/nodex%20demo2.gif" alt="NodeX demo 2" width="880" />
 </p>
 
-<p align="center"><a href="statics/videos/nodex%20demo.mp4">▶ Watch the full demo video</a></p>
+<p align="center"><a href="https://github.com/ShawnPi233/nodex-ai-studio/releases/download/demo-v1/nodex-demo.mp4">▶ Watch the full demo (6.5 min, Release asset)</a></p>
 
 ## Features
 
@@ -38,14 +42,14 @@ NodeX turns every AI session into a **canvas node**: links express references an
 - **Session nodes**: streaming output, collapsible thinking, tool-failure notices, `question` prompts, double-Esc interrupt, native fork and summaries.
 - **Notebook nodes**: Markdown scratchpad + AI summary, with cross-quoting between sessions and notebooks that keeps provenance.
 - **Context routing**: hard-load / same-workspace retrieval / Portal snapshots — isolated and explainable.
-- **Multi-agent collaboration**: templates such as Three Departments & Six Ministries, brainstorming and debates, orchestrating sub-sessions and aggregating results.
+- **Multi-agent collaboration**: templates for brainstorming and debates, plus "Three Departments & Six Ministries" (a Chinese-governance metaphor: one chair node with layered worker nodes reporting upward), orchestrating sub-sessions and aggregating results.
 - **Files & workspaces**: directory tree, Monaco preview/edit, outputs grouped by session.
 - **Shared sessions with OpenCode**: in `attach` mode the TUI and the canvas see the same sessions.
 
 ## Requirements
 
 - [Bun](https://bun.sh) (or the bundled `.tools/bin/bun`)
-- A reachable **OpenCode Server** (see below)
+- A reachable **OpenCode Server** (required). NodeX ships no model capability of its own: without OpenCode you can only run the offline demo via `scripts/demo.sh --no-model`; real conversations need OpenCode installed and a one-time `opencode auth login`.
 
 ## Quick Start
 
@@ -130,7 +134,7 @@ After installing, click the NodeX icon in the activity bar or run the command `N
 ## Models & AI Settings
 
 - The model list comes from the provider currently connected to OpenCode (`/config/providers`); NodeX keeps no model table and never writes your OpenCode config. Precedence: request params > node `meta.model` > NodeX global setting > OpenCode default.
-- Lightweight features such as notebook summaries, node metadata and selected-text rewriting call an OpenAI-compatible endpoint directly; configure the base URL, model and key under "AI Settings" (default model: `gpt-6-luna`).
+- Lightweight features such as notebook summaries, node metadata and selected-text rewriting call an OpenAI-compatible endpoint directly; configure the base URL, model and key under "AI Settings" (defaults: `https://api.openai.com/v1` / `gpt-4o-mini`, your own key required; without it these features are unavailable, but conversations still work).
 - **Secret isolation**: the API key lives only in `graph.json` in the local data directory (`runs/` is gitignored; override with `NODEX_DATA_DIR`). No secrets in the source or repo, and APIs return redacted values only.
 
 ## Architecture
@@ -156,14 +160,15 @@ nodex/
 bash scripts/dev.sh          # OpenCode + API + Web together
 bun run api                  # API only
 bun run web                  # Web only (with /api reverse proxy)
+bun test                     # unit and adapter contract tests
 ```
 
 Static files and `/api` proxy responses are served with `Cache-Control: no-store`, so a refresh picks up the latest changes.
 
 ## Compatibility
 
-- Supports OpenCode `1.17.0` – `2.0.0` (exclusive). `opencode.supported` in `GET /health` flags whether the current instance is in range; out-of-range logs a startup warning.
-- Run the runtime adapter contract tests before upgrading OpenCode.
+- Fully verified against OpenCode `1.17.x`. The adapter checks the `1.17.0` – `2.0.0` (exclusive) range, and `opencode.supported` in `GET /health` flags whether the current instance is in range; out-of-range logs a startup warning and is not guaranteed to work.
+- Run the adapter contract tests before upgrading OpenCode: `bun test`.
 
 ## Acknowledgements
 

@@ -11,6 +11,10 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/ShawnPi233/nodex-ai-studio/actions/workflows/ci.yml"><img src="https://github.com/ShawnPi233/nodex-ai-studio/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+</p>
+
+<p align="center">
   <a href="#快速开始">快速开始</a> ·
   <a href="#接入-opencode">接入 OpenCode</a> ·
   <a href="#架构">架构</a> ·
@@ -30,7 +34,7 @@ NodeX 把每个 AI 会话变成一个**画布节点**：连线表示引用与派
   <img src="statics/images/demo/nodex%20demo2.gif" alt="NodeX 演示 2" width="880" />
 </p>
 
-<p align="center"><a href="statics/videos/nodex%20demo.mp4">▶ 观看完整演示视频</a></p>
+<p align="center"><a href="https://github.com/ShawnPi233/nodex-ai-studio/releases/download/demo-v1/nodex-demo.mp4">▶ 观看完整演示视频（6.5 分钟，Release 附件）</a></p>
 
 ## 特性
 
@@ -45,7 +49,7 @@ NodeX 把每个 AI 会话变成一个**画布节点**：连线表示引用与派
 ## 环境要求
 
 - [Bun](https://bun.sh)（也可用仓库内 `.tools/bin/bun`）
-- 一个可用的 **OpenCode Server**（见下节）
+- 一个可用的 **OpenCode Server**（必需）。NodeX 自身不含模型能力：没有 OpenCode 时只能跑 `scripts/demo.sh --no-model` 的离线演示，真实对话需要先安装 OpenCode 并完成一次 `opencode auth login`。
 
 ## 快速开始
 
@@ -130,7 +134,7 @@ bun run package        # 生成 nodex-vscode-*.vsix
 ## 模型与 AI 设置
 
 - 模型清单来自 OpenCode 当前连接的 provider（`/config/providers`），NodeX 不维护模型表、不写你的 OpenCode 配置。优先级：请求参数 > 节点 `meta.model` > NodeX 全局设置 > OpenCode 默认。
-- 笔记本摘要、节点元数据、选中文本改写等轻量能力由 NodeX 直连 OpenAI 兼容接口，可在界面「AI 设置」中配置地址、模型与 Key（默认模型 `gpt-6-luna`）。
+- 笔记本摘要、节点元数据、选中文本改写等轻量能力由 NodeX 直连 OpenAI 兼容接口，可在界面「AI 设置」中配置地址、模型与 Key（默认 `https://api.openai.com/v1` / `gpt-4o-mini`，需要你自己的 Key；未配置时这些功能不可用，不影响会话本身）。
 - **密钥隔离**：API Key 只存在本机数据目录的 `graph.json`（`runs/` 已 gitignore，`NODEX_DATA_DIR` 可改），源码与仓库不含密钥，接口只返回脱敏值。
 
 ## 架构
@@ -156,14 +160,15 @@ nodex/
 bash scripts/dev.sh          # OpenCode + API + Web 一起起
 bun run api                  # 只起 API
 bun run web                  # 只起 Web（含 /api 反向代理）
+bun test                     # 单元与适配器契约测试
 ```
 
 静态文件与 `/api` 代理响应带 `Cache-Control: no-store`，刷新即可看到最新改动。
 
 ## 兼容性
 
-- 支持 OpenCode `1.17.0` ~ `2.0.0`（不含）。`GET /health` 的 `opencode.supported` 标记当前实例是否在区间内，超出会在启动日志告警。
-- 升级 OpenCode 前建议先跑适配器契约测试。
+- 当前在 OpenCode `1.17.x` 上完整验证。适配器按 `1.17.0` ~ `2.0.0`（不含）做版本区间检查，`GET /health` 的 `opencode.supported` 会标记当前实例是否在区间内，超出会在启动日志告警；区间之外不保证可用。
+- 升级 OpenCode 前先跑适配器契约测试：`bun test`。
 
 ## 致谢
 
