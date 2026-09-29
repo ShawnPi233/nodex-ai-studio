@@ -12,7 +12,11 @@
     "dev": "bash scripts/dev.sh",
     "demo": "bash scripts/demo.sh",
     "api": "bun run apps/api/src/server.ts",
-    "web": "bun run apps/web/src/dev.ts"
+    "web": "bun run apps/web/src/dev.ts",
+    "test": "bun test"
+  },
+  "engines": {
+    "bun": ">=1.1.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

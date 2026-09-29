@@ -37,7 +37,7 @@ bun install
 bash scripts/dev.sh          # start OpenCode + API + Web
 bun run api                  # API only (default :4501)
 bun run web                  # Web only (default :4600)
-bun test                     # unit tests (local only, see below)
+bun test                     # unit + adapter contract tests
 ```
 
 ## Boundary with OpenCode (important invariants)
@@ -68,8 +68,7 @@ Connection strategy (`scripts/lib.sh`): `OPENCODE_BASE_URL` → probe a local ru
 The following are **kept local and not published in the public repo**, excluded via `.gitignore`. Do not `git add -f` them:
 
 - Design / process docs: `CONTEXT.md`, `docs/`
-- Tests: `**/test/`, `**/*.test.ts`, `**/*.test.js`
-- Runtime probe scripts: `packages/runtime-opencode/scripts/`
+- Ad-hoc runtime probe scripts: `packages/runtime-opencode/scripts/`
 - Runtime artifacts and secrets: `runs/`, `test-data/`, `.env*`, `node_modules/`, `.tools/`
 
 Before adding a new file, decide whether it is "product source / user-facing docs" or "internal process material"; the latter belongs in `.gitignore` as well.
