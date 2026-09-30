@@ -110,9 +110,14 @@
   .sr-item .sr-sub { font-size: 11px; color: #8b93a7; }
 
   #toolbar {
-    top: 58px; left: 12px; display: flex; gap: 8px; align-items: center;
-    padding: 8px 10px;
+    top: 58px; left: 12px; right: 12px; display: flex; flex-wrap: wrap; gap: 6px 8px;
+    align-items: center; padding: 8px 10px;
   }
+  /* 宽度不足时按整项换行：子项不收缩、文字不换行，避免被压成竖排、高度暴涨。 */
+  #toolbar > * { flex-shrink: 0; }
+  #toolbar button, #toolbar label, #toolbar .zoom-group { white-space: nowrap; }
+  /* 提示行放得下就留在本行，放不下才换行；过长省略，不参与横向挤压。 */
+  #toolbar > .hint { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-left: 0; }
   #status { bottom: 12px; left: 12px; font-size: 12px; color: #8b93a7; padding: 8px 12px; }
   #nodeHoverInfo {
     display: none; position: fixed; z-index: 2147483000; pointer-events: none;
