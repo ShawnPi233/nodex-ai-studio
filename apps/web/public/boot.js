@@ -17,12 +17,3 @@
   document.documentElement.dataset.theme = effective
   document.documentElement.dataset.themeBase = base
 })();
-
-// 宿主标识：VS Code 插件以 ?host=vscode 内嵌时，文件侧栏与文件预览交给编辑器，
-// 网页端据此隐藏对应入口（不影响独立网页画布）。
-(() => {
-  try {
-    const host = new URLSearchParams(location.search).get("host") || window.__NODEX_HOST__ || ""
-    if (host) document.documentElement.dataset.host = host
-  } catch { /* Ignore blocked storage / URL parsing. */ }
-})();

@@ -121,7 +121,7 @@ NODEX_OC_MODE=isolated bash scripts/dev.sh   # 切到隔离模式
 
 ## VS Code 扩展
 
-`apps/vscode/` 是一个薄壳扩展：复用（或按需拉起）NodeX 本地服务，在 webview 中内嵌网页画布，能力与网页端一致；「文件侧栏 / 文件预览」交给编辑器本身。
+`apps/vscode/` 是一个薄壳扩展：复用（或按需拉起）NodeX 本地服务，在 webview 中内嵌网页画布，能力与网页端一致，文件侧栏 / 文件预览 / 工作区目录等文件管理功能在扩展内同样可用。
 
 ```bash
 cd apps/vscode

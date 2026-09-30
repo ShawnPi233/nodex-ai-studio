@@ -1,11 +1,3 @@
-  /* VS Code 插件内嵌（?host=vscode）：本地文件侧栏 / 文件预览 / 工作区目录入口交给编辑器。 */
-  html[data-host="vscode"] #fsBrowserBtn,
-  html[data-host="vscode"] #fsPanel,
-  html[data-host="vscode"] .file-viewer,
-  html[data-host="vscode"] .context-viewer-files,
-  html[data-host="vscode"] #wsList button[data-dir] {
-    display: none !important;
-  }
   :root {
     color-scheme: dark;
     --nx-bg: #0b0d12;

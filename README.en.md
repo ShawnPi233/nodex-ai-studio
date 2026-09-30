@@ -121,7 +121,7 @@ An explicit `OPENCODE_BASE_URL` takes precedence. See [`.env.example`](.env.exam
 
 ## VS Code Extension
 
-`apps/vscode/` is a thin-shell extension: it reuses (or starts on demand) the local NodeX service and embeds the web canvas in a webview, so canvas capabilities match the web app; the file sidebar / preview are delegated to the editor itself.
+`apps/vscode/` is a thin-shell extension: it reuses (or starts on demand) the local NodeX service and embeds the web canvas in a webview, so its capabilities match the web app — the file sidebar / preview and workspace directory entries work inside the extension too.
 
 ```bash
 cd apps/vscode

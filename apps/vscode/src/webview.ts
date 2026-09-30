@@ -13,11 +13,11 @@ const originOf = (url: string): string => {
 
 /**
  * 内嵌 NodeX 网页画布：外层只负责提供一个铺满的 iframe，指向本地 NodeX 网页服务。
- * 页面以 `?host=vscode` 打开，网页端据此隐藏文件侧栏与文件预览。
+ * 与浏览器打开同一个网页端，文件侧栏 / 文件预览等能力完全一致。
  */
 export function renderWebviewHtml(webview: vscode.Webview, webUrl: string, _mode: "sidebar" | "panel"): string {
   const base = webUrl.replace(/\/+$/, "")
-  const src = `${base}/?host=vscode`
+  const src = `${base}/`
   const csp = [
     "default-src 'none'",
     `frame-src ${originOf(base)} ${webview.cspSource}`,

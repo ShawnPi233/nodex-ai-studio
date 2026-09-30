@@ -60,7 +60,7 @@ Connection strategy (`scripts/lib.sh`): `OPENCODE_BASE_URL` → probe a local ru
 - Keep pure geometry / pure logic decoupled from the DOM (e.g. `public/graph-layout.js`, `packages/domain`) so it stays unit-testable.
 - Frontend static changes only need a refresh; changes to `apps/web/src/dev.ts` or `apps/api` require restarting the relevant process.
 - Default ports: OpenCode `4096`, API `4501`, Web `4600`; override with `NODEX_OC_PORT` / `NODEX_PORT` / `NODEX_WEB_PORT`.
-- **Host adaptation**: the web app detects being embedded in VS Code via `?host=vscode`, which hides the file sidebar and file preview (the `html[data-host="vscode"]` rules in `index.html` plus `IS_VSCODE_HOST` in `app.js`). Follow this marker for new host adaptations and never change the standalone web app's default behavior for VS Code.
+- **Host parity**: the VS Code extension embeds the same web app as a browser (same URL, no host-specific gating), so the file sidebar / preview and workspace directory entries are available inside the webview too. If a future host-specific adaptation is needed, reintroduce a `?host=` marker deliberately and document it here.
 - The VS Code extension is deliberately a "thin shell": it does not bundle the web app into the extension but embeds the local service URL, avoiding a fork from the web app. Build/packaging is documented in `apps/vscode/README.md` (packaged with bun; on Node 18 run `vsce` via bun).
 
 ## What must not be committed

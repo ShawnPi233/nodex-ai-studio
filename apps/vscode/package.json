@@ -2,7 +2,7 @@
   "name": "nodex-vscode",
   "displayName": "NodeX",
   "description": "NodeX 图谱画布工作台，内嵌在 VS Code 中。",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "publisher": "nodex",
   "private": true,
   "license": "MIT",

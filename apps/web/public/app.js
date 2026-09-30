@@ -36,11 +36,6 @@ import { classifySendFailure } from "/send-recovery.js"
 import { selectedMessageRange } from "/message-range.js"
 
 const API = "/api"
-// 宿主标识：VS Code 插件以 ?host=vscode 内嵌时隐藏文件侧栏与文件预览（由编辑器提供）。
-const HOST = (() => {
-  try { return new URLSearchParams(location.search).get("host") || window.__NODEX_HOST__ || "" } catch { return "" }
-})()
-const IS_VSCODE_HOST = HOST === "vscode"
 const app = document.getElementById("app")
 const canvas = document.getElementById("canvas")
 const ctx = canvas.getContext("2d")
@@ -652,7 +647,6 @@ document.addEventListener("click", (event) => {
   if (!el) return
   event.preventDefault()
   event.stopPropagation()
-  if (IS_VSCODE_HOST) return
   const path = el.dataset.path
   void openFileViewer(path)
   void revealFsPath(path)
@@ -4742,7 +4736,6 @@ function fileWindowSize(path) {
 }
 
 async function openFileViewer(path, ownerNode = null) {
-  if (IS_VSCODE_HOST) return null
   let viewer = fileWindows.get(path)
   if (viewer) {
     focusContextViewer(viewer)
@@ -5695,7 +5688,6 @@ fsTreeEl.addEventListener("contextmenu", (event) => {
 })
 
 function openFsPanel() {
-  if (IS_VSCODE_HOST) return
   fsPanel.hidden = false
   fsPanel.style.zIndex = fsPanel.dataset.mode === "window" ? "46" : "7"
   updateFsButton()
