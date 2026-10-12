@@ -356,6 +356,14 @@ function needsAutoTitle(node) {
   return isPlaceholderTitle(node.title) || node.meta?.titleProvisional === true
 }
 
+/** 从用户首条输入里取一段短标题，作为长任务期间的临时标题（不出自模型，故标记 titleProvisional）。 */
+function deriveProvisionalTitle(text) {
+  const line = String(text ?? "").split("\n").map((value) => value.trim()).find(Boolean) ?? ""
+  const clean = line.replace(/\s+/g, " ").trim()
+  if (!clean) return ""
+  return clean.length > 24 ? `${clean.slice(0, 24)}…` : clean
+}
+
 function makeBadge(value, className) {  const badge = document.createElement("span")
   badge.className = className
   badge.textContent = value
@@ -504,6 +512,43 @@ function renderMarkdown(md) {
   })
   renderMathIn(content)
   return `<div class="fv-md">${content.innerHTML}</div>`
+}
+
+/** 取绝对路径的父目录（POSIX）。 */
+function dirnameOf(path) {
+  const p = String(path ?? "")
+  const index = p.lastIndexOf("/")
+  return index > 0 ? p.slice(0, index) : "/"
+}
+
+/**
+ * 把 baseDir 下的相对引用解析成绝对路径；带协议（http:/data: 等）、协议相对或纯锚点时返回 null。
+ */
+function resolveMarkdownPath(baseDir, ref) {
+  const trimmed = String(ref ?? "").trim()
+  if (!trimmed) return null
+  if (/^[a-z][a-z0-9+.-]*:/i.test(trimmed)) return null
+  if (trimmed.startsWith("//") || trimmed.startsWith("#")) return null
+  const withoutQuery = trimmed.split("#")[0].split("?")[0]
+  let decoded
+  try { decoded = decodeURIComponent(withoutQuery) } catch { decoded = withoutQuery }
+  if (decoded.startsWith("/")) return decoded
+  const parts = String(baseDir ?? "").split("/").filter(Boolean)
+  for (const segment of decoded.split("/")) {
+    if (!segment || segment === ".") continue
+    if (segment === "..") { parts.pop(); continue }
+    parts.push(segment)
+  }
+  return "/" + parts.join("/")
+}
+
+/** Markdown 里的相对图片按「文档所在目录」解析为可内联读取的地址（跳过外部 / 数据地址）。 */
+function absolutizeMarkdownImages(container, baseDir) {
+  if (!container || !baseDir) return
+  container.querySelectorAll("img[src]").forEach((img) => {
+    const resolved = resolveMarkdownPath(baseDir, img.getAttribute("src"))
+    if (resolved) img.setAttribute("src", `/api/fs/raw?path=${encodeURIComponent(resolved)}`)
+  })
 }
 
 // 选区内若含公式，用原始 LaTeX 源码替换渲染后的 KaTeX DOM，摘录 / 复制才能拿到 md 源码。
@@ -1529,6 +1574,15 @@ async function refreshRuntimeStatus() {
         hasQuestion: Boolean(viewer.questionRequest || data.questions?.[nodeId]?.length),
       })
       if (abortedId) markMessageAborted(viewer, abortedId)
+    }
+    // 后台继续的长任务：会话一旦空闲就给仍缺正式标题的节点补生成（窗口关掉也生效）。
+    for (const nodeId of [...pendingTitleNodes]) {
+      const node = state.nodesById.get(nodeId)
+      if (!node || !needsAutoTitle(node)) { pendingTitleNodes.delete(nodeId); continue }
+      if (sendingNodes.has(nodeId) || !state.runtimeStatusAvailable) continue
+      if (node.opencodeSessionId && state.runtimeStatus.has(node.opencodeSessionId)) continue
+      if (contextWindows.get(nodeId)?.questionRequest) continue
+      maybeGenerateNodeTitle(nodeId)
     }
     if (state.hoverNode) updateNodeHoverInfo(state.hoverNode)
     draw()
@@ -3819,7 +3873,7 @@ async function answerContextQuestion(viewer, reject = false) {
   try {
     const action = reject ? "reject" : "reply"
     await api(`/nodes/${viewer.dataset.nodeId}/questions/${encodeURIComponent(request.id)}/${action}`, {
-      method: "POST", body: JSON.stringify(reject ? {} : { answers }), timeout: 15000,
+      method: "POST", body: JSON.stringify(reject ? {} : { answers }), timeout: 130000,
     })
     viewer.questionRequest = null
     panel.hidden = true
@@ -3956,6 +4010,14 @@ const sendingNodes = new Set()
 // 流中断 / 恢复（此时不会走到成功分支）也要补触发，否则节点会一直显示「未命名节点」。
 const titleRequests = new Set()
 const titleAttemptAt = new Map()
+// 长任务流在客户端超时中断、但会话仍在后台继续：登记节点，等它真正空闲后再补生成标题，
+// 不依赖发送成功分支，也不要求对应窗口仍然打开。
+const pendingTitleNodes = new Set()
+function requestNodeTitleWhenIdle(nodeId) {
+  const node = state.nodesById.get(nodeId)
+  if (!node || !needsAutoTitle(node)) return
+  pendingTitleNodes.add(nodeId)
+}
 function maybeGenerateNodeTitle(nodeId, { force = false } = {}) {
   const viewer = contextWindows.get(nodeId)
   const node = state.nodesById.get(nodeId)
@@ -4014,6 +4076,23 @@ async function sendContextMessage(viewer, { fromQueue = false } = {}) {
   if (!messages) { contextSendStatus.textContent = "请等待会话加载完成"; return }
   const generateFirstTitle = !commandMatch && !viewer.titleGenerated &&
     needsAutoTitle(state.nodesById.get(nodeId))
+  // 首条消息先用用户输入落一个临时标题，长任务期间不再显示「未命名节点」；
+  // 回复真正跑完后由 /nodes/:id/metadata 覆盖为 AI 标题（titleProvisional 标记）。
+  if (!commandMatch && isPlaceholderTitle(state.nodesById.get(nodeId)?.title)) {
+    const provisional = deriveProvisionalTitle(text)
+    const node = state.nodesById.get(nodeId)
+    if (node && provisional) {
+      node.title = provisional
+      node.meta = { ...(node.meta ?? {}), titleProvisional: true }
+      state.displayTitles = computeDisplayTitles()
+      renderContextViewerHeading(viewer, node)
+      draw()
+      requestNodeTitleWhenIdle(nodeId)
+      void api(`/nodes/${nodeId}`, {
+        method: "PATCH", body: JSON.stringify({ title: provisional, titleProvisional: true }),
+      }).then(() => refresh()).catch(() => {})
+    }
+  }
   hideCommandMenu(viewer)
   stopAnsweredWatch(viewer)
   viewer.undonePrompts = []
@@ -4129,8 +4208,10 @@ async function sendContextMessage(viewer, { fromQueue = false } = {}) {
       } catch { /* Keep the draft if the session cannot be read back. */ }
       // 无论读取是否成功，都尝试用非破坏方式刷新一次历史。
       if (contextWindows.get(nodeId) === viewer) await reloadContextViewer(nodeId)
-      // 流中断但回复其实已完成（长工具调用常见）：同样补一次标题，避免一直「未命名节点」。
-      if (recovered) maybeGenerateNodeTitle(nodeId)
+      // 流中断但回复其实已完成（长工具调用常见）：补一次标题，避免一直「未命名节点」。
+      if (recovered) maybeGenerateNodeTitle(nodeId, { force: true })
+      // 消息已写入但尚未跑完：登记节点，等后台会话真正空闲后再补标题。
+      else if (persisted) requestNodeTitleWhenIdle(nodeId)
       if (!persisted) contextPrompt.value = text + (contextPrompt.value ? `\n\n${contextPrompt.value}` : "")
       autoGrowPrompt(contextPrompt)
       viewer.needsReplySync = persisted && !recovered
@@ -5063,16 +5144,17 @@ function hideFileSelMenu(viewer) {
   if (menu) { menu.hidden = true; menu.innerHTML = "" }
 }
 
-function fileSelShortcutsHtml(shortcuts) {
-  return shortcuts.map((item, index) => `<button type="button" data-file-custom="${index}" title="${escapeHtml(item.instruction)}">${escapeHtml(item.name)}</button>`).join("")
-}
-
 function showFileSelMenu(viewer, point) {
   const menu = viewer.querySelector(".file-sel-menu")
   const editor = viewer.fileEditor
   if (!menu || !editor) return
-  const selection = editor.getSelection()
-  const text = selection ? editor.getModel().getValueInRange(selection) : ""
+  let selection = editor.getSelection()
+  let text = selection ? editor.getModel().getValueInRange(selection) : ""
+  // 添加 / 删除快捷键时会先弹对话框，实时选区可能丢失，回退到上次记录的范围。
+  if ((!selection || !text.trim()) && viewer.fileSelRange) {
+    const fallback = editor.getModel().getValueInRange(viewer.fileSelRange)
+    if (fallback.trim()) { selection = viewer.fileSelRange; text = fallback }
+  }
   if (!selection || !text.trim()) { hideFileSelMenu(viewer); return }
   viewer.fileSelRange = selection
   const shortcuts = loadNbRewriteShortcuts()
@@ -5081,11 +5163,10 @@ function showFileSelMenu(viewer, point) {
     <div class="nb-sel-actions">
       <button type="button" data-file-sel="copy">复制</button>
       <button type="button" data-file-sel="cut">剪切</button>
-      <button type="button" data-file-quick="摘要">摘要</button>
-      <button type="button" data-file-quick="翻译成中文">翻译成中文</button>
-      <button type="button" data-file-quick="翻译成英文">翻译成英文</button>
-      ${fileSelShortcutsHtml(shortcuts)}
+      ${quickShortcutButtonsHtml("file")}
+      ${shortcuts.map((item, index) => `<button type="button" data-file-custom="${index}" title="${escapeHtml(item.instruction)}">${escapeHtml(item.name)}</button>`).join("")}
       <button type="button" data-file-add-shortcut title="添加改写快捷键">＋</button>
+      <button type="button" data-file-manage-shortcuts title="管理 / 删除快捷键">管理</button>
     </div>
     <div class="nb-sel-rewrite">
       <textarea class="nb-rewrite-input" rows="1" placeholder="AI 改写指令，如：更简洁 / 翻译成英文"></textarea>
@@ -5161,6 +5242,9 @@ function showFileSelMenu(viewer, point) {
     saveNbRewriteShortcuts(list)
     showFileSelMenu(viewer, viewer.fileSelPoint)
   }
+  menu.querySelector("[data-file-manage-shortcuts]").onclick = () => openShortcutManager(() => {
+    if (fileWindows.get(viewer.dataset.path) === viewer) showFileSelMenu(viewer, viewer.fileSelPoint)
+  })
   rewriteInput.addEventListener("mousedown", (event) => event.stopPropagation())
   const autoGrow = () => {
     rewriteInput.style.height = "auto"
@@ -5311,12 +5395,60 @@ function attachMediaSpectrum(media, canvas) {
   if (viewer) viewer.stopMediaSpectrum = () => { stop(); audioCtx?.close?.().catch(() => {}) }
 }
 
+/** 通过后端下载接口触发浏览器下载（后端限制在允许的根目录内）。 */
+function downloadFsPath(path, name) {
+  const a = document.createElement("a")
+  a.href = `/api/fs/download?path=${encodeURIComponent(path)}`
+  a.download = name || fsBasename(path)
+  document.body.append(a)
+  a.click()
+  a.remove()
+}
+
+/** 把当前预览的图片复制到系统剪贴板（非 PNG 先经 canvas 转 PNG，兼容剪贴板 API）。 */
+async function copyPreviewImage(viewer) {
+  const response = await fetch(`/api/fs/raw?path=${encodeURIComponent(viewer.dataset.path)}`)
+  if (!response.ok) throw new Error(`读取图片失败（${response.status}）`)
+  let blob = await response.blob()
+  if ((blob.type || "image/png") !== "image/png") {
+    if (typeof createImageBitmap !== "function") throw new Error("当前浏览器不支持该图片格式的复制，请改用下载")
+    const bitmap = await createImageBitmap(blob)
+    const canvas = document.createElement("canvas")
+    canvas.width = bitmap.width
+    canvas.height = bitmap.height
+    canvas.getContext("2d").drawImage(bitmap, 0, 0)
+    bitmap.close?.()
+    const png = await new Promise((resolve) => canvas.toBlob((out) => resolve(out), "image/png"))
+    if (!png) throw new Error("转换为 PNG 失败")
+    blob = png
+  }
+  if (typeof ClipboardItem !== "function") throw new Error("当前环境不支持写入图片剪贴板，请改用下载")
+  await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })])
+}
+
 function mountFileExtras(viewer, f) {
   viewer.fileData = f
   viewer.fileEditor = null
   viewer.fileViewMode = "preview"
   viewer.filePreviewEl = null
   viewer.fileCodeEl = null
+  const downloadBtn = viewer.querySelector(".file-viewer-download")
+  if (downloadBtn) {
+    downloadBtn.hidden = false
+    downloadBtn.onclick = () => { downloadFsPath(f.path, f.name); statusEl.textContent = `已开始下载：${f.name}` }
+  }
+  const imageCopyBtn = viewer.querySelector(".file-viewer-image-copy")
+  if (imageCopyBtn) {
+    imageCopyBtn.hidden = f.kind !== "image"
+    imageCopyBtn.onclick = async () => {
+      try {
+        await copyPreviewImage(viewer)
+        statusEl.textContent = "已复制图片到剪贴板"
+      } catch (error) {
+        statusEl.textContent = `复制图片失败：${error.message}`
+      }
+    }
+  }
   const codeEl = viewer.querySelector(".fv-code")
   const preview = viewer.querySelector(".fv-md-preview, .fv-table-preview")
   const mediaWrap = viewer.querySelector(".fv-media")
@@ -5334,8 +5466,12 @@ function mountFileExtras(viewer, f) {
   if (toggleable) {
     viewer.filePreviewEl = preview
     viewer.fileCodeEl = codeEl
-    // 点击预览正文进入编辑；标题栏「编辑 / 预览」按钮可随时切回。
-    preview.addEventListener("click", () => setFileViewMode(viewer, "edit"))
+    if (f.kind === "markdown") absolutizeMarkdownImages(preview, dirnameOf(f.path))
+    // 双击预览正文进入编辑（单击保持预览，便于选中 / 点链接）；标题栏按钮可随时切回。
+    preview.addEventListener("dblclick", (event) => {
+      if (event.target.closest("a")) return
+      setFileViewMode(viewer, "edit")
+    })
     return
   }
   if (codeEl) {
@@ -5351,8 +5487,10 @@ function mountFileExtras(viewer, f) {
 function refreshFilePreviewContent(viewer, content) {
   const preview = viewer.filePreviewEl
   if (!preview) return
-  if (viewer.fileData?.kind === "markdown") preview.innerHTML = renderMarkdown(content)
-  else if (isCsvFile(viewer.dataset.path)) preview.innerHTML = renderCsvTable(content, csvDelimiter(viewer.dataset.path))
+  if (viewer.fileData?.kind === "markdown") {
+    preview.innerHTML = renderMarkdown(content)
+    absolutizeMarkdownImages(preview, dirnameOf(viewer.fileData.path))
+  } else if (isCsvFile(viewer.dataset.path)) preview.innerHTML = renderCsvTable(content, csvDelimiter(viewer.dataset.path))
 }
 
 /** 在「预览」与「Monaco 编辑」之间切换（Markdown / CSV / TSV）。 */
@@ -5411,7 +5549,7 @@ const fsPanel = document.getElementById("fsPanel")
 const fsTreeEl = fsPanel.querySelector(".fs-tree")
 const fsPathEl = fsPanel.querySelector(".fs-path")
 const fsStatusEl = fsPanel.querySelector(".fs-status")
-const fsState = { mode: "global", currentPath: null, root: null, selected: new Set(), anchor: null, expanded: new Set(), dirCache: new Map() }
+const fsState = { mode: "global", currentPath: null, root: null, globalRoot: null, selected: new Set(), anchor: null, expanded: new Set(), dirCache: new Map() }
 // 目录树剪贴板：复制 / 剪切待粘贴的路径（支持多选）。
 const fsClipboard = { mode: null, paths: [] }
 
@@ -5426,11 +5564,33 @@ function fsActiveWorkspace() {
 
 function fsSyncDirInput() {
   const input = fsPanel.querySelector("#fsDirInput")
+  const setBtn = fsPanel.querySelector("#fsSetDir")
   if (!input) return
+  if (fsState.mode === "global") {
+    // 「全局」模式下，该输入框用于设置文件管理的全局根目录（可浏览的范围）。
+    input.disabled = false
+    input.placeholder = "全局根目录（绝对路径）；留空恢复默认（用户主目录）"
+    if (setBtn) setBtn.textContent = "设为全局根目录"
+    if (document.activeElement !== input) input.value = fsState.globalRoot ?? ""
+    return
+  }
   const ws = fsActiveWorkspace()
   input.disabled = !ws
   input.placeholder = ws ? `当前页面「${ws.name}」的工作区目录（绝对路径）` : "请先在顶部选择一个页面"
+  if (setBtn) setBtn.textContent = "设置目录"
   if (document.activeElement !== input) input.value = ws?.dir ?? ""
+}
+
+/** 设置全局文件根目录（写入 settings.filesRoot；留空恢复默认）。 */
+async function fsSetGlobalRoot(dir) {
+  const value = typeof dir === "string" ? dir.trim() : ""
+  try {
+    await api("/settings", { method: "PUT", body: JSON.stringify({ filesRoot: value || null }) })
+    await reloadFsTree()
+    fsSetStatus(value ? `已设置全局根目录：${value}` : "已恢复默认全局根目录")
+  } catch (error) {
+    fsSetStatus(`设置失败: ${error.message}`, true)
+  }
 }
 
 async function fsSetWorkspaceDir(dir) {
@@ -5611,12 +5771,7 @@ fsMenu.querySelector("#fsMenuCut").onclick = () => { hideFsMenu(); void fsCut() 
 fsMenu.querySelector("#fsMenuDownload").onclick = () => {
   const path = fsMenu.dataset.path
   hideFsMenu()
-  const a = document.createElement("a")
-  a.href = `/api/fs/download?path=${encodeURIComponent(path)}`
-  a.download = fsBasename(path)
-  document.body.append(a)
-  a.click()
-  a.remove()
+  downloadFsPath(path, fsBasename(path))
 }
 fsMenu.querySelector("#fsMenuCopyPath").onclick = () => {
   const paths = fsSelectedPaths()
@@ -5690,6 +5845,7 @@ fsTreeEl.addEventListener("contextmenu", (event) => {
 function openFsPanel() {
   fsPanel.hidden = false
   fsPanel.style.zIndex = fsPanel.dataset.mode === "window" ? "46" : "7"
+  restoreFsDrawerWidth()
   updateFsButton()
   updateMaximizedVars()
   if (tiledWindowPositions) retileContextWindows()
@@ -5728,6 +5884,8 @@ async function renderFsGlobal() {
   try {
     const payload = await api("/fs/list")
     fsState.root = payload.root
+    fsState.globalRoot = payload.root
+    fsSyncDirInput()
     fsPanel.querySelector(".fs-root").textContent = payload.root
     renderFsTree(fsTreeEl, payload)
   } catch (error) {
@@ -6155,6 +6313,7 @@ fsPanel.querySelector("#fsMinimize").onclick = () => {
     fsPanel.style.top = ""
     fsPanel.style.width = ""
     fsPanel.style.height = ""
+    restoreFsDrawerWidth()
   }
   fsPanel.style.zIndex = nextWindow ? "46" : "7"
   updateMaximizedVars()
@@ -6170,11 +6329,15 @@ fsPanel.querySelector("#fsBindDir").onclick = async () => {
   if (fsActiveWorkspace()?.dir === dir) setFsMode("workspace")
 }
 const fsDirInput = fsPanel.querySelector("#fsDirInput")
-fsPanel.querySelector("#fsSetDir").onclick = () => void fsSetWorkspaceDir(fsDirInput.value)
+const applyFsDir = () => {
+  if (fsState.mode === "global") void fsSetGlobalRoot(fsDirInput.value)
+  else void fsSetWorkspaceDir(fsDirInput.value)
+}
+fsPanel.querySelector("#fsSetDir").onclick = () => applyFsDir()
 fsDirInput.addEventListener("keydown", (event) => {
   if (event.key !== "Enter" || event.isComposing) return
   event.preventDefault()
-  void fsSetWorkspaceDir(fsDirInput.value)
+  applyFsDir()
 })
 fsPanel.querySelector("#fsClearDir").onclick = () => void fsSetWorkspaceDir("")
 
@@ -6182,6 +6345,47 @@ attachWindowResize(fsPanel, {
   minWidth: 300,
   minHeight: 220,
   save: (w, h) => localStorage.setItem("nodex.fsSize", JSON.stringify({ w, h })),
+})
+
+// 抽屉模式：右侧拖拽条调整侧栏宽度（窗口模式已由四边 .win-resize 覆盖）。
+const FS_DRAWER_WIDTH_KEY = "nodex.fsDrawerWidth"
+function fsDrawerWidthBounds() {
+  return { min: 220, max: Math.max(260, Math.min(760, window.innerWidth - 40)) }
+}
+function applyFsDrawerWidth(width) {
+  const { min, max } = fsDrawerWidthBounds()
+  const w = clamp(Math.round(width), min, max)
+  fsPanel.style.width = w + "px"
+  return w
+}
+function restoreFsDrawerWidth() {
+  if (fsPanel.dataset.mode !== "drawer" || !fsPanel.dataset.widthManual) return
+  const saved = Number(localStorage.getItem(FS_DRAWER_WIDTH_KEY))
+  if (Number.isFinite(saved) && saved > 0) applyFsDrawerWidth(saved)
+}
+fsPanel.querySelector("[data-fs-resize]").addEventListener("pointerdown", (event) => {
+  if (event.button !== 0 || fsPanel.dataset.mode !== "drawer") return
+  event.preventDefault()
+  event.stopPropagation()
+  const handle = event.currentTarget
+  const startX = event.clientX
+  const startW = fsPanel.getBoundingClientRect().width
+  handle.classList.add("active")
+  handle.setPointerCapture(event.pointerId)
+  const move = (e) => applyFsDrawerWidth(startW + (e.clientX - startX))
+  const stop = () => {
+    handle.classList.remove("active")
+    handle.removeEventListener("pointermove", move)
+    handle.removeEventListener("pointerup", stop)
+    handle.removeEventListener("pointercancel", stop)
+    fsPanel.dataset.widthManual = "1"
+    localStorage.setItem(FS_DRAWER_WIDTH_KEY, String(Math.round(fsPanel.getBoundingClientRect().width)))
+    updateMaximizedVars()
+    if (tiledWindowPositions) retileContextWindows()
+  }
+  handle.addEventListener("pointermove", move)
+  handle.addEventListener("pointerup", stop, { once: true })
+  handle.addEventListener("pointercancel", stop, { once: true })
 })
 
 // 窗口模式下拖动标题栏
@@ -6590,12 +6794,90 @@ const NB_QUICK_INSTRUCTIONS = {
   "翻译成英文": "翻译成英文",
 }
 
+// 内置快捷项被用户删除后记在这里，可在「管理」里恢复默认。
+const NB_HIDDEN_QUICK_KEY = "nodex.nbRewriteHiddenQuick"
+function loadHiddenQuick() {
+  try {
+    const list = JSON.parse(localStorage.getItem(NB_HIDDEN_QUICK_KEY) || "[]")
+    return Array.isArray(list) ? list.filter((item) => typeof item === "string") : []
+  } catch { return [] }
+}
+function saveHiddenQuick(list) {
+  try { localStorage.setItem(NB_HIDDEN_QUICK_KEY, JSON.stringify([...new Set(list)])) } catch { /* Ignore blocked storage. */ }
+}
+
+/** 选中文本浮层里的快捷按钮（内置项按隐藏列表过滤）。attr 为 "nb" 或 "file"。 */
+function quickShortcutButtonsHtml(attr) {
+  const hidden = new Set(loadHiddenQuick())
+  return Object.entries(NB_QUICK_INSTRUCTIONS)
+    .filter(([name]) => !hidden.has(name))
+    .map(([name]) => `<button type="button" data-${attr}-quick="${escapeHtml(name)}">${escapeHtml(name)}</button>`)
+    .join("")
+}
+
+let shortcutDialogEl = null
+function ensureShortcutDialog() {
+  if (shortcutDialogEl) return shortcutDialogEl
+  shortcutDialogEl = document.createElement("dialog")
+  shortcutDialogEl.className = "node-delete-dialog shortcut-dialog"
+  shortcutDialogEl.addEventListener("close", () => shortcutDialogEl.replaceChildren())
+  document.body.append(shortcutDialogEl)
+  return shortcutDialogEl
+}
+
+/** 管理改写快捷键：可删除内置项（记入隐藏列表）与自定义项，或一键恢复默认。 */
+function openShortcutManager(onChanged) {
+  const dialog = ensureShortcutDialog()
+  const render = () => {
+    const hidden = new Set(loadHiddenQuick())
+    const builtins = Object.entries(NB_QUICK_INSTRUCTIONS)
+      .filter(([name]) => !hidden.has(name))
+      .map(([name, instruction]) => ({ name, instruction, builtin: true }))
+    const customs = loadNbRewriteShortcuts().map((item) => ({ name: item.name, instruction: item.instruction, builtin: false }))
+    const items = [...builtins, ...customs]
+    dialog.innerHTML = `
+      <h3>管理改写快捷键</h3>
+      <p class="muted">选中文本后可用的快捷按钮。删除内置项后可用「恢复默认」找回。</p>
+      <ul class="shortcut-list">${items.map((item) => `
+        <li>
+          <span class="sc-name">${escapeHtml(item.name)}</span>
+          <span class="sc-ins">${escapeHtml(item.instruction)}</span>
+          ${item.builtin ? '<span class="badge">内置</span>' : ""}
+          <button type="button" class="mini danger" data-sc-del data-builtin="${item.builtin ? "1" : ""}" data-name="${escapeHtml(item.name)}" data-ins="${escapeHtml(item.instruction)}">删除</button>
+        </li>`).join("") || '<li class="muted">暂无快捷键</li>'}
+      </ul>
+      <div class="row end"><button type="button" id="scRestore">恢复默认</button><button type="button" class="primary" id="scClose">关闭</button></div>`
+    dialog.querySelectorAll("[data-sc-del]").forEach((button) => {
+      button.onclick = () => {
+        if (button.dataset.builtin === "1") {
+          saveHiddenQuick([...loadHiddenQuick(), button.dataset.name])
+        } else {
+          const name = button.dataset.name
+          const instruction = button.dataset.ins
+          saveNbRewriteShortcuts(loadNbRewriteShortcuts().filter((item) => !(item.name === name && item.instruction === instruction)))
+        }
+        render()
+        onChanged?.()
+      }
+    })
+    dialog.querySelector("#scRestore").onclick = () => { saveHiddenQuick([]); render(); onChanged?.() }
+    dialog.querySelector("#scClose").onclick = () => dialog.close()
+  }
+  render()
+  if (!dialog.open) dialog.showModal()
+}
+
 function showNotebookSelMenu(viewer, point) {
   const docEl = viewer.querySelector(".nb-doc")
   const menu = viewer.querySelector(".nb-sel-menu")
   if (!docEl || !menu) return
-  const start = docEl.selectionStart
-  const end = docEl.selectionEnd
+  let start = docEl.selectionStart
+  let end = docEl.selectionEnd
+  // 添加 / 删除快捷键时会先弹对话框，编辑框失焦后实时选区可能丢失，回退到上次记录的范围。
+  if (start === end && viewer.nbSelRange && viewer.nbSelRange.end > viewer.nbSelRange.start) {
+    start = viewer.nbSelRange.start
+    end = viewer.nbSelRange.end
+  }
   if (start === end || !docEl.value.slice(start, end).trim()) { hideNotebookSelMenu(viewer); return }
   viewer.nbSelRange = { start, end }
   const shortcuts = loadNbRewriteShortcuts()
@@ -6604,11 +6886,10 @@ function showNotebookSelMenu(viewer, point) {
     <div class="nb-sel-actions">
       <button type="button" data-nb-sel="copy">复制</button>
       <button type="button" data-nb-sel="cut">剪切</button>
-      <button type="button" data-nb-quick="摘要">摘要</button>
-      <button type="button" data-nb-quick="翻译成中文">翻译成中文</button>
-      <button type="button" data-nb-quick="翻译成英文">翻译成英文</button>
+      ${quickShortcutButtonsHtml("nb")}
       ${shortcuts.map((item, index) => `<button type="button" data-nb-custom="${index}" title="${escapeHtml(item.instruction)}">${escapeHtml(item.name)}</button>`).join("")}
       <button type="button" data-nb-add-shortcut title="添加改写快捷键">＋</button>
+      <button type="button" data-nb-manage-shortcuts title="管理 / 删除快捷键">管理</button>
     </div>
     <div class="nb-sel-rewrite">
       <textarea class="nb-rewrite-input" rows="1" placeholder="AI 改写指令，如：更简洁 / 翻译成英文"></textarea>
@@ -6694,6 +6975,9 @@ function showNotebookSelMenu(viewer, point) {
     saveNbRewriteShortcuts(list)
     showNotebookSelMenu(viewer, viewer.nbSelPoint)
   }
+  menu.querySelector("[data-nb-manage-shortcuts]").onclick = () => openShortcutManager(() => {
+    if (contextWindows.get(viewer.dataset.nodeId) === viewer) showNotebookSelMenu(viewer, viewer.nbSelPoint)
+  })
   rewriteInput.addEventListener("mousedown", (event) => event.stopPropagation())
   const autoGrow = () => {
     rewriteInput.style.height = "auto"
@@ -6798,7 +7082,11 @@ function renderNotebookBody(viewer) {
   }
   viewer.setNotebookEditing = setEditing
 
-  previewEl.onclick = () => setEditing(true)
+  // 双击预览进入编辑（单击保持预览，便于选中 / 点链接）；标题栏「编辑」按钮也可切换。
+  previewEl.ondblclick = (event) => {
+    if (event.target.closest("a")) return
+    setEditing(true)
+  }
 
   const editMarkdown = (kind) => {
     if (["heading", "heading2", "bullet", "ordered", "check", "quote"].includes(kind)) {

@@ -234,7 +234,7 @@
         <button type="button" class="icon-btn nb-search-next" title="下一个">↓</button>
         <button type="button" class="icon-btn nb-search-close" title="关闭">×</button>
       </div>
-      <div class="nb-preview fv-md" title="点击编辑"></div>
+      <div class="nb-preview fv-md" title="双击编辑"></div>
       <div class="nb-editor" hidden>
         <div class="md-tools" role="toolbar" aria-label="Markdown 格式">
           <button type="button" class="nb-undo" data-tip="撤回 · Ctrl/Cmd+Z" aria-label="撤回">↶</button>
@@ -277,6 +277,8 @@
         </div>
       </div>
       <button class="icon-btn file-viewer-view" title="切换预览 / 编辑" hidden>编辑</button>
+      <button class="icon-btn file-viewer-download" title="下载文件" hidden>下载</button>
+      <button class="icon-btn file-viewer-image-copy" title="复制图片到剪贴板" hidden>复制图片</button>
       <button class="icon-btn file-viewer-copy" title="复制完整路径">复制路径</button>
       <button class="icon-btn file-viewer-pin" title="置顶显示" aria-pressed="false">⇧</button>
       <button class="icon-btn file-viewer-persist" title="常驻显示（不被一键隐藏）" aria-pressed="false"><svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5.5 2.5h5"/><path d="M6.3 2.5 5.6 6 4.5 7.6h7L10.4 6 9.7 2.5"/><path d="M8 7.6v5.9"/></svg></button>
@@ -371,8 +373,8 @@
       <button type="button" class="icon-btn" id="fsClose" title="关闭">×</button>
     </div>
     <div class="fs-toolbar">
-      <input type="text" id="fsDirInput" class="fs-dir-input" placeholder="输入当前页面的工作区目录绝对路径" autocomplete="off" />
-      <button type="button" id="fsSetDir" title="把输入的路径设为当前页面的工作区目录">设置目录</button>
+      <input type="text" id="fsDirInput" class="fs-dir-input" placeholder="输入目录绝对路径" autocomplete="off" />
+      <button type="button" id="fsSetDir" title="「全局」模式：设为全局根目录；「本工作区」模式：设为当前页面目录">设置目录</button>
       <button type="button" id="fsBindDir" title="把当前浏览的目录绑定为当前页面目录" hidden>绑定当前目录</button>
       <button type="button" id="fsClearDir" title="解除当前页面的目录绑定" hidden>解除绑定</button>
       <button type="button" id="fsUndo" title="撤回上一次文件操作（删除 / 剪切 / 重命名）">撤回</button>
@@ -382,6 +384,7 @@
     <div class="fs-path"></div>
     <div class="fs-tree" tabindex="0"></div>
     <div class="fs-status muted" aria-live="polite"></div>
+    <span class="fs-resize" data-fs-resize title="拖动调整侧栏宽度"></span>
     <span class="win-resize" data-edge="s"></span><span class="win-resize" data-edge="e"></span><span class="win-resize" data-edge="w"></span><span class="win-resize" data-edge="se"></span><span class="win-resize" data-edge="sw"></span>
   </div>
 

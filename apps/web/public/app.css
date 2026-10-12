@@ -155,6 +155,14 @@
   .node-delete-dialog label.field { display: block; margin: 0 0 12px; font-size: 12px; color: #b8c0d4; }
   .node-delete-dialog label.field input { display: block; width: 100%; margin-top: 6px; padding: 7px 9px; border-radius: 6px; border: 1px solid #3a4152; background: #0f131b; color: #e6e8ee; font-size: 13px; }
   .node-delete-dialog .msg.error { min-height: 16px; margin: 0 0 10px; }
+  .shortcut-dialog { width: min(460px, calc(100vw - 24px)); }
+  .shortcut-list { list-style: none; margin: 0 0 14px; padding: 0; max-height: min(48vh, 380px); overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
+  .shortcut-list li { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border: 1px solid #2a3140; border-radius: 7px; background: #12161f; font-size: 12px; }
+  .shortcut-list .sc-name { flex: 0 0 auto; font-weight: 600; color: #e6e8ee; }
+  .shortcut-list .sc-ins { flex: 1 1 auto; min-width: 0; color: #8b93a7; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .shortcut-list .badge { flex: 0 0 auto; }
+  .shortcut-list .mini.danger { flex: 0 0 auto; color: #fca5a5; border: 1px solid #4b2530; border-radius: 6px; padding: 2px 8px; }
+  .shortcut-list .mini.danger:hover { color: #fecaca; background: #3f1d1d; }
   body[data-theme-base="light"] .node-delete-dialog label.field input { background: #f8fafc; color: #0f172a; border-color: #cbd5e1; }
   .node-delete-dialog select { display: block; width: 100%; margin-top: 6px; padding: 7px 9px; border-radius: 6px; border: 1px solid #3a4152; background: #0f131b; color: #e6e8ee; font-size: 13px; }
   body[data-theme-base="light"] .node-delete-dialog select { background: #f8fafc; color: #0f172a; border-color: #cbd5e1; }
@@ -1153,6 +1161,14 @@
   .fs-status.error { color: #fca5a5; }
   #fsPanel[data-mode="window"] .fs-head { cursor: grab; touch-action: none; }
   #fsPanel[data-mode="drawer"] .win-resize { display: none; }
+  /* 抽屉模式下的左右宽度拖拽条（窗口模式用四边 .win-resize 即可）。 */
+  .fs-resize { display: none; }
+  #fsPanel[data-mode="drawer"] .fs-resize {
+    display: block; position: absolute; top: 8px; bottom: 8px; right: -3px; width: 7px;
+    cursor: ew-resize; border-radius: 4px; touch-action: none;
+  }
+  #fsPanel[data-mode="drawer"] .fs-resize:hover,
+  #fsPanel[data-mode="drawer"] .fs-resize.active { background: #4f46e5; }
   body[data-theme-base="light"] .fs-row:hover { background: #e2e8f0; }
   /* 浅色外观下笔记本编辑工具栏 / 摘要用浅底，避免继承深色 --nx-* 变量。 */
   body[data-theme-base="light"]:not([data-theme="mac"]):not([data-theme="mac-dark"]) .notebook-viewer .nb-editor .md-tools { background: #fff; }
