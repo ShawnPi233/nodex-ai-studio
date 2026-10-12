@@ -314,11 +314,12 @@ export class OpencodeRuntime implements AgentRuntime {
 
   async replyQuestion(requestId: string, answers: string[][]): Promise<void> {
     if (!this.options.baseUrl) throw new Error("opencode: 缺少运行时地址")
+    // 回答问题会触发模型继续生成，响应可能较久；给足时间，避免被 abort 成「操作超时」。
     const res = await fetch(`${this.options.baseUrl}/question/${encodeURIComponent(requestId)}/reply`, {
       method: "POST",
       headers: { "content-type": "application/json", ...(this.options.authHeader ? { Authorization: this.options.authHeader } : {}) },
       body: JSON.stringify({ answers }),
-      signal: AbortSignal.timeout(10000),
+      signal: AbortSignal.timeout(120000),
     })
     if (!res.ok) throw new Error(`opencode: 提交回答失败 ${res.status}`)
   }
@@ -328,7 +329,7 @@ export class OpencodeRuntime implements AgentRuntime {
     const res = await fetch(`${this.options.baseUrl}/question/${encodeURIComponent(requestId)}/reject`, {
       method: "POST",
       headers: this.options.authHeader ? { Authorization: this.options.authHeader } : undefined,
-      signal: AbortSignal.timeout(10000),
+      signal: AbortSignal.timeout(120000),
     })
     if (!res.ok) throw new Error(`opencode: 拒绝回答失败 ${res.status}`)
   }

@@ -436,6 +436,30 @@ function currentGraph() {
   return toGraphState(store.snapshot())
 }
 
+/**
+ * 等待回答问题被 OpenCode 接收。reply / reject 的响应可能延迟到模型续写才返回，
+ * 因此同时轮询「该问题是否已从待答列表移除」，任一先完成即视为提交成功，
+ * 避免只依赖响应而在模型生成较慢时误报超时。
+ */
+async function awaitQuestionSettled(id: string, submitting: Promise<void>): Promise<{ ok: boolean; error?: unknown }> {
+  let error: unknown
+  let failed = false
+  const submitted = submitting.then(() => (failed ? "error" : "ok"), (e) => { error = e; failed = true; return "error" })
+  const cleared = (async (): Promise<"ok" | "timeout"> => {
+    const deadline = Date.now() + 120000
+    while (Date.now() < deadline) {
+      if (failed) return "timeout"
+      try { if (!(await runtime.listQuestions()).some((item) => item.id === id)) return "ok" } catch { /* 轮询期间的瞬时失败稍后重试 */ }
+      await new Promise((resolve) => setTimeout(resolve, 300))
+    }
+    return "timeout"
+  })()
+  const result = await Promise.race([submitted, cleared])
+  if (result === "error") return { ok: false, error }
+  if (result === "timeout") return { ok: false, error: error ?? new Error("等待 OpenCode 接收回答超时") }
+  return { ok: true }
+}
+
 function stripInjectedContext(text: string): string {
   let end = -1
   for (const marker of ["</node>", "</reference>", "</collaboration>", "</nodex-seed>"]) {
@@ -1815,7 +1839,8 @@ const routes: Array<{
         return json({ error: gone ? "该问题已失效（会话可能已中断）" : `提交回答失败：${(error as Error).message}`, gone }, gone ? 410 : 502)
       }
       if (params[2] === "reject") {
-        try { await runtime.rejectQuestion(request.id) } catch (error) { return goneOrError(error) }
+        const settled = await awaitQuestionSettled(request.id, runtime.rejectQuestion(request.id))
+        if (!settled.ok) return goneOrError(settled.error)
         return json({ rejected: true })
       }
       const answers = body?.answers
@@ -1829,7 +1854,8 @@ const routes: Array<{
           return json({ error: "该问题不支持自定义回答" }, 400)
         }
       }
-      try { await runtime.replyQuestion(request.id, answers) } catch (error) { return goneOrError(error) }
+      const settled = await awaitQuestionSettled(request.id, runtime.replyQuestion(request.id, answers))
+      if (!settled.ok) return goneOrError(settled.error)
       return json({ replied: true })
     },
   },
