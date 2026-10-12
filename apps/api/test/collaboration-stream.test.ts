@@ -195,6 +195,15 @@ test("sending to the brainstorming main node runs each child before the summary 
     })).json() as { meta: Record<string, unknown> }
     expect(iconPatched.meta.iconColor).toBe("#a7c7e7")
     expect((await patchCategory({ iconColor: "red" })).status).toBe(400)
+    const provisional = await (await patchCategory({ title: "临时标题", titleProvisional: true })).json() as { title: string; meta: Record<string, unknown> }
+    expect(provisional.title).toBe("临时标题")
+    expect(provisional.meta.titleProvisional).toBe(true)
+    expect(provisional.meta.iconColor).toBe("#a7c7e7")
+    const titled = await (await fetch(`${base}/nodes/node_plain/metadata`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ apply: true }),
+    })).json() as { node: { title: string; meta: Record<string, unknown> } }
+    expect(titled.node.title).toBe("AI 标题")
+    expect(titled.node.meta.titleProvisional).toBe(false)
     const defaultSettings = await (await fetch(`${base}/settings`)).json() as { contextLimit: number }
     expect(defaultSettings.contextLimit).toBe(300000)
     const savedSettings = await (await fetch(`${base}/settings`, {

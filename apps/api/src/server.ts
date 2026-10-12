@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto"
+import { existsSync, statSync } from "node:fs"
+import { homedir } from "node:os"
 import { dirname, resolve } from "node:path"
 import { joinWorkspace, leaveWorkspace, membersOf, workspacesOf } from "@nodex/domain"
 import type { GraphNode } from "@nodex/domain"
@@ -209,9 +211,9 @@ function storeAiSettings(): AiSettings {
   return { ...(store.settings().ai ?? {}), apiKey: store.aiApiKey() }
 }
 
-/** 文件预览允许的根目录；默认进程工作目录，可用设置或环境变量覆盖。 */
+/** 文件预览允许的根目录；默认用户主目录，可用设置或环境变量覆盖。 */
 function filesRoot(): string {
-  return store.settings().filesRoot ?? process.env.NODEX_FILES_ROOT ?? process.cwd()
+  return resolve(store.settings().filesRoot ?? process.env.NODEX_FILES_ROOT ?? homedir())
 }
 
 /** 目录浏览允许的根：预览根 + 各工作区绑定的目录。 */
@@ -1437,9 +1439,13 @@ const routes: Array<{
           return json({ error: "iconColor 必须是 #RRGGBB 格式" }, 400)
         }
       }
+      // 临时标题标记：首条消息落地即写入，等 AI 元数据生成后覆盖并清除。
+      if (body.titleProvisional === true) {
+        patch.meta = { ...(patch.meta ?? node.meta), titleProvisional: true }
+      }
 
       if (Object.keys(patch).length === 0) {
-        return json({ error: "没有可更新的字段（支持 title / categories / category / tags / iconColor）" }, 400)
+        return json({ error: "没有可更新的字段（支持 title / categories / category / tags / iconColor / titleProvisional）" }, 400)
       }
       const updated = store.patchNode(node.id, patch)
       return json(updated)
@@ -1713,7 +1719,17 @@ const routes: Array<{
       })
       store.upsertNode(created)
 
+      // 派生节点默认继承两个来源节点所在的页面（两个节点各在一个页面时会都加入）。
+      const graph = currentGraph()
+      const inheritedWorkspaces = [...new Set([...workspacesOf(graph, a.id), ...workspacesOf(graph, b.id)])]
       const now = new Date().toISOString()
+      if (inheritedWorkspaces.length) {
+        for (const workspaceId of inheritedWorkspaces) {
+          if (store.workspace(workspaceId)) joinWorkspace(graph, workspaceId, created.id, now)
+        }
+        store.setMembers(graph.members)
+      }
+
       const createdLinks = []
       for (const origin of [a, b]) {
         const snapshot = await snapshotTextOf(origin.id)
@@ -2129,7 +2145,17 @@ const routes: Array<{
         if (model) patch.defaultModel = model
       }
       if (body?.filesRoot === null) patch.filesRoot = undefined
-      else if (typeof body?.filesRoot === "string") patch.filesRoot = body.filesRoot.trim() || undefined
+      else if (typeof body?.filesRoot === "string") {
+        const value = body.filesRoot.trim()
+        if (!value) patch.filesRoot = undefined
+        else {
+          const abs = resolve(value)
+          if (!existsSync(abs) || !statSync(abs).isDirectory()) {
+            return json({ error: `目录不存在或不是目录：${abs}` }, 400)
+          }
+          patch.filesRoot = abs
+        }
+      }
       if (body?.contextLimit === null) patch.contextLimit = undefined
       else if (body?.contextLimit !== undefined) {
         const limit = Number(body.contextLimit)
@@ -2281,6 +2307,24 @@ const routes: Array<{
         headers: {
           "content-type": raw.mime,
           "content-disposition": `attachment; filename*=UTF-8''${encodeURIComponent(raw.name)}`,
+        },
+      })
+    },
+  },
+  {
+    // 内联读取文件（限制在允许的根目录内）：供 Markdown 里的相对图片等直接以 URL 引用。
+    method: "GET",
+    pattern: /^\/fs\/raw$/,
+    handler: async ({ url }) => {
+      const path = url.searchParams.get("path")
+      if (!path) return json({ error: "缺少 path 参数" }, 400)
+      const raw = readRawFile(path, allowedRoots())
+      if ("error" in raw) return json({ error: raw.error }, 400)
+      return new Response(raw.buffer, {
+        headers: {
+          "content-type": raw.mime,
+          "content-disposition": `inline; filename*=UTF-8''${encodeURIComponent(raw.name)}`,
+          "cache-control": "no-store, max-age=0",
         },
       })
     },
