@@ -2219,7 +2219,7 @@ const routes: Array<{
       if (!node) return json({ error: "节点不存在" }, 404)
       const root = filesRoot()
       const messages = node.opencodeSessionId ? await visibleMessages(node.opencodeSessionId) : []
-      return json({ root, files: collectNodeFiles(messages, root) })
+      return json({ root, files: collectNodeFiles(messages, root, { sinceMs: Date.parse(node.createdAt) || 0 }) })
     },
   },
   {
@@ -2278,7 +2278,7 @@ const routes: Array<{
       await Promise.all(nodes.map(async (node) => {
         try {
           const messages = await visibleMessages(node.opencodeSessionId!)
-          for (const file of collectNodeFiles(messages, root)) {
+          for (const file of collectNodeFiles(messages, root, { sinceMs: Date.parse(node.createdAt) || 0 })) {
             const prev = merged.get(file.path)
             if (prev) {
               if (file.direction === "output") prev.file = { ...prev.file, direction: "output" }

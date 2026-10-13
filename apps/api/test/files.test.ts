@@ -9,6 +9,8 @@ import {
   copyEntry,
   createTextFile,
   directionOf,
+  extractCommandOutputs,
+  extractCommandRefs,
   isWithinRoot,
   languageOf,
   listDirectory,
@@ -137,6 +139,62 @@ test("directionOf 按工具名区分输入/输出", () => {
   assert.equal(directionOf("write"), "output")
   assert.equal(directionOf("multiedit"), "output")
   assert.equal(directionOf("bash"), "unknown")
+})
+
+test("extractCommandOutputs 从命令里挑出会被写出的路径", () => {
+  const cases: Array<[string, string[]]> = [
+    ["python run.py > results/out.jsonl", ["results/out.jsonl"]],
+    ["cmd >> log.txt 2> err.log", ["log.txt", "err.log"]],
+    ["cmd &> all.log", ["all.log"]],
+    ["echo hi | tee -a run.log", ["run.log"]],
+    ["python plot.py --output fig.png", ["fig.png"]],
+    ["python plot.py --output=fig.png", ["fig.png"]],
+    ["curl -o model.bin https://x/y", ["model.bin"]],
+    ["gcc -o prog main.c", ["prog"]],
+    ["echo hi > 'a b.jsonl'", ["a b.jsonl"]],
+    ["ls -la; echo done", []],
+    ["cat a > /dev/null", []],
+    ["echo $HOME > $OUT", []],
+    ["cmd > *.jsonl", []],
+  ]
+  for (const [command, expected] of cases) {
+    assert.deepEqual([...extractCommandOutputs(command)].sort(), [...expected].sort(), command)
+  }
+})
+
+test("extractCommandRefs 从命令（含 heredoc / cd）里挑出存在的产物", () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "nodex-refs-")))
+  mkdirSync(join(root, "run"))
+  writeFileSync(join(root, "run", "predictions.jsonl"), "{}\n")
+  writeFileSync(join(root, "run", "fig.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47]))
+  const command = `cd ${root}/run && python - <<'PY'\nimport json\njson.dump({}, open("predictions.jsonl","w"))\nprint("saved fig.png")\nPY`
+  const expected = [join(root, "run", "fig.png"), join(root, "run", "predictions.jsonl")].sort()
+  assert.deepEqual(extractCommandRefs(command, root).sort(), expected)
+  // sinceMs 在未来时，所有现存文件都被视为「先于会话存在」而被过滤
+  assert.deepEqual(extractCommandRefs(command, root, Date.now() + 60_000), [])
+})
+
+test("collectNodeFiles 从命令收集真实存在的输出文件，不收录不存在的", () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "nodex-cmd-")))
+  mkdirSync(join(root, "out"))
+  writeFileSync(join(root, "out", "a.jsonl"), '{"a":1}\n')
+  writeFileSync(join(root, "fig.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47]))
+  const messages = [
+    {
+      id: "m",
+      role: "assistant" as const,
+      parts: [
+        { type: "tool", tool: "bash", state: { input: { command: "python run.py > out/a.jsonl && python plot.py --output fig.png" } } },
+        { type: "tool", tool: "bash", state: { input: { command: "cat nope.txt > nope.jsonl" } } },
+      ],
+    },
+  ]
+  const files = collectNodeFiles(messages as any, root)
+  assert.equal(files.find((f) => f.name === "a.jsonl")?.direction, "output")
+  assert.equal(files.find((f) => f.name === "a.jsonl")?.kind, "jsonl")
+  assert.equal(files.find((f) => f.name === "fig.png")?.direction, "output")
+  assert.equal(files.find((f) => f.name === "fig.png")?.kind, "image")
+  assert.equal(files.find((f) => f.name === "nope.jsonl"), undefined)
 })
 
 test("collectNodeFiles 标注文件方向，写入优先", () => {

@@ -148,21 +148,115 @@ function mergeDirection(a: FileDirection, b: FileDirection): FileDirection {
   return "unknown"
 }
 
+/** 命令类工具：写入的路径无法从 tool 输入声明里拿到，只能从命令本身推断。 */
+function isCommandTool(tool: string): boolean {
+  const name = tool.toLowerCase()
+  return name === "bash" || name === "shell" || name === "sh" || name === "zsh" || name === "exec" || name === "terminal" || name === "command"
+}
+
+/**
+ * 从 shell 命令里挑出「明显会被写入」的候选路径：重定向（>、>>、>|、2>、&>）、
+ * `tee`、以及 `-o` / `--output` 之类的输出参数。只做静态收集，调用方再校验文件是否存在，
+ * 因此命令里的普通参数不会误列成产物。变量 / glob / 反引号等无法静态解析的展开一律跳过。
+ */
+export function extractCommandOutputs(command: string): string[] {
+  const out = new Set<string>()
+  const add = (raw: string | undefined) => {
+    if (!raw) return
+    let token = raw.trim()
+    if (token.length > 1 && ((token.startsWith('"') && token.endsWith('"')) || (token.startsWith("'") && token.endsWith("'")))) {
+      token = token.slice(1, -1)
+    }
+    token = token.replace(/[;|&),]+$/, "").trim()
+    if (!token || token === "-" || token.startsWith("/dev/")) return
+    if (/[$*?`{}~]/.test(token)) return
+    out.add(token)
+  }
+  // 重定向：可选 fd 数字或 &，后接 > / >> / >|
+  const redirect = /(?:^|[\s;&|()])(?:\d+>>?\|?|&>>?\|?|>>?\|?)\s*("[^"]+"|'[^']+'|[^\s;&|<>()]+)/g
+  for (let m = redirect.exec(command); m; m = redirect.exec(command)) add(m[1])
+  // tee [-a] 文件...
+  const tee = /(?:^|[\s;&|()])tee\s+([^;&|<>]+)/g
+  for (let m = tee.exec(command); m; m = tee.exec(command)) {
+    for (const token of m[1].split(/\s+/)) if (token && !token.startsWith("-")) add(token)
+  }
+  // -o / --output[= ]path 之类的输出参数
+  const flags = /(?:^|\s)(-o|--output|--output-file|--outfile|--out|--save|--save-path|--output-dir|--out-dir|--output_path|--output_json|--output_jsonl)(?:[=\s]+)("[^"]+"|'[^']+'|[^\s;&|<>()]+)/g
+  for (let m = flags.exec(command); m; m = flags.exec(command)) add(m[2])
+  return [...out]
+}
+
+/** 常见「产物 / 数据」扩展名：命令里出现这些名字时才当候选文件（普通参数不会命中）。 */
+const DATA_EXT = new Set([
+  ".json", ".jsonl", ".ndjson", ".json5", ".csv", ".tsv", ".parquet", ".xlsx", ".xls",
+  ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp", ".tiff", ".pdf",
+  ".txt", ".log", ".md", ".markdown", ".html", ".xml", ".yaml", ".yml", ".toml", ".sql",
+  ".wav", ".mp3", ".flac", ".ogg", ".mp4", ".mov", ".webm",
+  ".npz", ".npy", ".pt", ".pth", ".ckpt", ".safetensors", ".bin", ".zip", ".gz", ".tar", ".tgz",
+])
+
+function isPathLikeToken(token: string): boolean {
+  const t = token.trim()
+  if (!t || t.startsWith("-")) return false
+  if (/[$*?`{}\[\]~<>]/.test(t)) return false
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(t)) return false
+  if (t.startsWith("/dev/")) return false
+  return t.includes("/") || DATA_EXT.has(extname(t).toLowerCase())
+}
+
+/**
+ * 从命令里挑出「被引用且真实存在的文件」作为候选产物：脚本常在命令行或 heredoc 内写出
+ * 路径（如 `open("predictions.jsonl","w")`、`savefig("fig.png")`），这些不是 shell 重定向，
+ * 拿不到确切方向。这里按命令里的 `cd` 目录尝试解析相对路径，并可用 sinceMs 过滤掉先于
+ * 本会话存在的既有输入（数据集 / 依赖），只留下本次会话新增或修改的文件。
+ */
+export function extractCommandRefs(command: string, root: string, sinceMs = 0): string[] {
+  const bases: string[] = [root]
+  const cd = /(?:^|[\s;&|()])cd\s+("[^"]+"|'[^']+'|[^\s;&|<>()]+)/g
+  for (let m = cd.exec(command); m; m = cd.exec(command)) {
+    const dir = m[1].replace(/^["']|["']$/g, "")
+    if (dir && !/[$*?`{}~]/.test(dir)) bases.push(dir.startsWith("/") ? dir : resolve(root, dir))
+  }
+  const out = new Set<string>()
+  const token = /"([^"\n]*)"|'([^'\n]*)'|([^\s;&|<>()'"]+)/g
+  for (let m = token.exec(command); m; m = token.exec(command)) {
+    // 引号内可能还带别的词（如 print("saved fig.png")），再按空白拆开逐个判断。
+    const raws = m[1] !== undefined ? m[1].split(/\s+/) : m[2] !== undefined ? m[2].split(/\s+/) : [m[3]]
+    for (const raw of raws) {
+      if (!raw || !isPathLikeToken(raw)) continue
+      const candidates = raw.startsWith("/") ? [raw] : bases.map((base) => resolve(base, raw))
+      for (const abs of candidates) {
+        try {
+          const s = statSync(abs)
+          if (s.isDirectory() || (sinceMs && s.mtimeMs < sinceMs)) continue
+          out.add(abs)
+          break
+        } catch { /* 该候选根下不存在，换下一个 */ }
+      }
+    }
+    if (out.size >= 200) break
+  }
+  return [...out]
+}
+
 /**
  * 从会话消息里收集「被工具写入/读取过的文件」。
- * 只依赖 tool part 的 state.input / metadata 与 file part，
- * 不猜测不存在的文件；目录会被跳过。
+ * 只依赖 tool part 的 state.input / metadata 与 file part，不猜测不存在的文件；目录会被跳过。
+ * 命令类工具（bash 等）额外从其命令里推断产物：重定向 / tee / 输出参数直接记为输出，
+ * 命令里引用且晚于 sinceMs 出现的文件也记为输出（脚本常把路径写在 heredoc 内）。
  */
 export function collectNodeFiles(
   messages: RuntimeMessage[],
   root: string,
+  options: { sinceMs?: number } = {},
 ): NodeFile[] {
+  const sinceMs = options.sinceMs ?? 0
   const found = new Map<string, { tool: string; direction: FileDirection }>()
 
-  const note = (candidate: unknown, tool: string) => {
+  const note = (candidate: unknown, tool: string, forced?: FileDirection) => {
     if (typeof candidate !== "string" || !candidate.trim()) return
     const abs = toAbs(candidate.trim(), root)
-    const direction = directionOf(tool)
+    const direction = forced ?? directionOf(tool)
     const prev = found.get(abs)
     if (prev) prev.direction = mergeDirection(prev.direction, direction)
     else found.set(abs, { tool, direction })
@@ -173,12 +267,23 @@ export function collectNodeFiles(
       const st = (p.state ?? {}) as any
       const input = st.input ?? {}
       if (p.type === "tool") {
-        note(input.filePath, p.tool ?? "tool")
-        note(input.path, p.tool ?? "tool")
-        note(input.file, p.tool ?? "tool")
-        note(input.filename, p.tool ?? "tool")
-        note(st.metadata?.filePath, p.tool ?? "tool")
-        note(st.metadata?.path, p.tool ?? "tool")
+        const tool = p.tool ?? "tool"
+        note(input.filePath, tool)
+        note(input.path, tool)
+        note(input.file, tool)
+        note(input.filename, tool)
+        note(st.metadata?.filePath, tool)
+        note(st.metadata?.path, tool)
+        if (isCommandTool(tool) && typeof input.command === "string") {
+          for (const candidate of extractCommandOutputs(input.command)) {
+            const abs = toAbs(candidate, root)
+            try {
+              if (statSync(abs).isDirectory()) continue
+            } catch { continue }
+            note(candidate, tool, "output")
+          }
+          for (const abs of extractCommandRefs(input.command, root, sinceMs)) note(abs, tool, "output")
+        }
       }
       if (p.type === "file" && p.filename) note(p.filename, "file")
     }
