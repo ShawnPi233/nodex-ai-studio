@@ -9755,15 +9755,127 @@ function searchFiltersHtml(sessions) {
   return `<div class="sr-filters">${rows.join("")}</div>`
 }
 
-function searchTimelineHtml(nodes, sessions, minMs, maxMs) {
-  const span = maxMs - minMs || 1
-  const days = new Map()
-  const put = (ms) => { if (!ms) return; const key = dayKeyOf(ms); if (!days.has(key) || ms > days.get(key)) days.set(key, ms) }
+// ---- 时间轴：横向进度条 + 按住 Ctrl 显示日期列表（对齐会话窗大纲的交互） ----
+let searchDays = []                       // [{ key, ms, count }]，新 → 旧
+let searchRange = { min: 0, max: 0, span: 0 }
+const searchTime = { hold: false, index: 0 }
+
+function computeSearchDays(nodes, sessions) {
+  const map = new Map()
+  const put = (ms) => {
+    if (!ms) return
+    const key = dayKeyOf(ms)
+    const cur = map.get(key)
+    if (!cur) map.set(key, { key, ms, count: 1 })
+    else { cur.count += 1; if (ms > cur.ms) cur.ms = ms }
+  }
   for (const n of nodes) put(Date.parse(n.createdAt) || 0)
   for (const s of sessions) put(s.created || s.updated || 0)
-  return [...days.entries()].sort((a, b) => b[1] - a[1]).map(([key, ms]) =>
-    `<button type="button" class="sr-tick" data-day="${escapeHtml(key)}" style="top:${(((maxMs - ms) / span) * 100).toFixed(2)}%" title="${escapeHtml(dayLabelOf(key))}"></button>`,
+  return [...map.values()].sort((a, b) => b.ms - a.ms)
+}
+
+function searchTimeBarHtml() {
+  return '<div class="sr-timebar" hidden><div class="sr-timebar-track"><div class="sr-timebar-fill"></div><div class="sr-timebar-thumb"></div></div><span class="sr-timebar-label"></span></div><div class="sr-timelist" hidden></div>'
+}
+
+function searchSetThumb(key) {
+  const bar = searchResults.querySelector(".sr-timebar")
+  if (!bar) return
+  const day = key ? searchDays.find((d) => d.key === key) : searchDays[0]
+  const ratio = day && searchRange.span ? (day.ms - searchRange.min) / searchRange.span : 1
+  const pct = (clamp(ratio, 0, 1) * 100).toFixed(2)
+  bar.querySelector(".sr-timebar-fill").style.width = pct + "%"
+  bar.querySelector(".sr-timebar-thumb").style.left = pct + "%"
+  bar.querySelector(".sr-timebar-label").textContent = day ? dayLabelOf(day.key) : ""
+}
+
+function searchJumpToDay(key) {
+  const list = searchResults.querySelector(".sr-list")
+  const header = list?.querySelector(`.sr-day[data-day="${CSS.escape(key)}"]`)
+  if (!list || !header) return
+  list.scrollTop += header.getBoundingClientRect().top - list.getBoundingClientRect().top
+}
+
+function searchDayForMs(ms) {
+  if (!searchDays.length) return null
+  let best = searchDays[0]
+  for (const d of searchDays) if (Math.abs(d.ms - ms) < Math.abs(best.ms - ms)) best = d
+  return best
+}
+
+function wireSearchTimeBar() {
+  const bar = searchResults.querySelector(".sr-timebar")
+  if (!bar || !searchDays.length || !searchRange.span) return
+  bar.hidden = false
+  searchSetThumb(searchDays[0].key)
+  const track = bar.querySelector(".sr-timebar-track")
+  const apply = (clientX) => {
+    const rect = track.getBoundingClientRect()
+    const ratio = clamp((clientX - rect.left) / Math.max(1, rect.width), 0, 1)
+    const day = searchDayForMs(searchRange.min + ratio * searchRange.span)
+    if (day) { searchSetThumb(day.key); searchJumpToDay(day.key) }
+  }
+  track.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) return
+    event.preventDefault()
+    track.setPointerCapture(event.pointerId)
+    apply(event.clientX)
+    const move = (e) => apply(e.clientX)
+    const stop = () => {
+      track.removeEventListener("pointermove", move)
+      track.removeEventListener("pointerup", stop)
+      track.removeEventListener("pointercancel", stop)
+    }
+    track.addEventListener("pointermove", move)
+    track.addEventListener("pointerup", stop)
+    track.addEventListener("pointercancel", stop)
+  })
+  // 滚动列表时把进度条同步到当前顶部日期
+  const list = searchResults.querySelector(".sr-list")
+  list?.addEventListener("scroll", () => {
+    if (searchTime.hold) return
+    const top = list.getBoundingClientRect().top
+    let current = null
+    for (const el of list.querySelectorAll(".sr-day")) {
+      if (el.getBoundingClientRect().top - top <= 2) current = el
+      else break
+    }
+    if (current?.dataset.day) searchSetThumb(current.dataset.day)
+  })
+}
+
+function highlightSearchTimeList() {
+  const pop = searchResults.querySelector(".sr-timelist")
+  if (!pop) return
+  pop.querySelectorAll(".sr-timelist-item").forEach((el, i) => el.classList.toggle("active", i === searchTime.index))
+  pop.querySelector(".sr-timelist-item.active")?.scrollIntoView({ block: "nearest" })
+}
+
+function openSearchTimeList() {
+  const pop = searchResults.querySelector(".sr-timelist")
+  if (!pop || !searchDays.length || searchTime.hold) return
+  searchTime.hold = true
+  searchTime.index = Math.max(0, Math.min(searchTime.index, searchDays.length - 1))
+  pop.innerHTML = searchDays.map((d, i) =>
+    `<button type="button" class="sr-timelist-item${i === searchTime.index ? " active" : ""}" data-day="${escapeHtml(d.key)}">${escapeHtml(dayLabelOf(d.key))}<span class="muted">${d.count}</span></button>`,
   ).join("")
+  pop.hidden = false
+  pop.querySelectorAll(".sr-timelist-item").forEach((el, i) => {
+    el.onmouseenter = () => { searchTime.index = i; highlightSearchTimeList() }
+    el.onclick = () => { const key = el.dataset.day; closeSearchTimeList(false); searchJumpToDay(key); searchSetThumb(key) }
+  })
+  highlightSearchTimeList()
+}
+
+function closeSearchTimeList(jump = false) {
+  const pop = searchResults.querySelector(".sr-timelist")
+  if (pop) { pop.hidden = true; pop.replaceChildren() }
+  if (!searchTime.hold) return
+  searchTime.hold = false
+  if (jump) {
+    const day = searchDays[searchTime.index]
+    if (day) { searchJumpToDay(day.key); searchSetThumb(day.key) }
+  }
 }
 
 function wireSearchResults(sessions) {
@@ -9780,14 +9892,7 @@ function wireSearchResults(sessions) {
   searchResults.querySelectorAll("[data-delete-session]").forEach((el) => {
     el.onclick = (event) => { event.stopPropagation(); const s = sessions.find((item) => item.id === el.dataset.deleteSession); if (s) void deleteOpencodeSession(s) }
   })
-  const list = searchResults.querySelector(".sr-list")
-  searchResults.querySelectorAll(".sr-tick").forEach((el) => {
-    el.onclick = () => {
-      const header = list?.querySelector(`.sr-day[data-day="${CSS.escape(el.dataset.day)}"]`)
-      if (!header || !list) return
-      list.scrollTop += header.getBoundingClientRect().top - list.getBoundingClientRect().top
-    }
-  })
+  wireSearchTimeBar()
 }
 
 let searchToken = 0
@@ -9833,13 +9938,19 @@ async function runSearch(force = false) {
     : ""
 
   const stamps = [...nodeList.map((n) => Date.parse(n.createdAt) || 0), ...sessionList.map((s) => s.created || s.updated || 0)].filter((v) => v > 0)
-  const minMs = stamps.length ? Math.min(...stamps) : 0
-  const maxMs = stamps.length ? Math.max(...stamps) : 0
-  const timeline = stamps.length ? `<div class="sr-timeline">${searchTimelineHtml(nodeList, sessionList, minMs, maxMs)}</div>` : ""
+  searchRange = {
+    min: stamps.length ? Math.min(...stamps) : 0,
+    max: stamps.length ? Math.max(...stamps) : 0,
+    span: 0,
+  }
+  searchRange.span = searchRange.max - searchRange.min
+  searchDays = computeSearchDays(nodeList, sessionList)
+  searchTime.index = Math.max(0, Math.min(searchTime.index, Math.max(0, searchDays.length - 1)))
   const empty = !nodeSection && !sessionSection ? `<div class="muted" style="padding:8px">${q ? "没有匹配的节点或会话" : "暂无节点或会话"}</div>` : ""
 
-  searchResults.innerHTML = searchFiltersHtml(sessions) +
-    `<div class="sr-main">${timeline}<div class="sr-list">${nodeSection}${sessionSection}${empty}</div></div>`
+  closeSearchTimeList(false)
+  searchResults.innerHTML = searchFiltersHtml(sessions) + searchTimeBarHtml() +
+    `<div class="sr-main"><div class="sr-list">${nodeSection}${sessionSection}${empty}</div></div>`
   searchResults.classList.add("open")
   wireSearchResults(sessions)
 }
@@ -9929,14 +10040,38 @@ searchInput.addEventListener("focus", () => void runSearch(true))
 searchInput.addEventListener("input", () => void runSearch())
 searchInput.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {
+    closeSearchTimeList(false)
     searchInput.value = ""
     searchResults.classList.remove("open")
     searchInput.blur()
   }
 })
 document.addEventListener("click", (e) => {
-  if (!e.target.closest(".search-wrap")) searchResults.classList.remove("open")
+  if (!e.target.closest(".search-wrap")) { closeSearchTimeList(false); searchResults.classList.remove("open") }
 })
+
+// 搜索结果的时间轴：按住 Ctrl 显示日期列表，滚轮/悬停选择，松开跳转；Esc 取消。
+window.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && searchTime.hold) {
+    event.preventDefault()
+    event.stopPropagation()
+    closeSearchTimeList(false)
+    return
+  }
+  if (event.key !== "Control" || !searchResults.classList.contains("open")) return
+  if (!searchResults.querySelector(".sr-timebar") || searchTime.hold) return
+  openSearchTimeList()
+})
+window.addEventListener("keyup", (event) => {
+  if (event.key === "Control" && searchTime.hold) closeSearchTimeList(true)
+})
+window.addEventListener("wheel", (event) => {
+  if (!searchTime.hold || !searchDays.length) return
+  event.preventDefault()
+  event.stopPropagation()
+  searchTime.index = (searchTime.index + (event.deltaY > 0 ? 1 : -1) + searchDays.length) % searchDays.length
+  highlightSearchTimeList()
+}, { passive: false, capture: true })
 
 // 渲染后的 Markdown 链接：外链新开标签，绝对路径交给文件预览；任何情况下都不替换当前页面
 document.addEventListener("click", (event) => {

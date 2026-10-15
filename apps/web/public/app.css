@@ -95,18 +95,25 @@
   #searchResults {
     display: none; position: absolute; top: 110%; left: 0; z-index: 9; width: min(460px, 94vw);
     background: rgba(18,21,28,.98); border: 1px solid #3a4152; border-radius: 10px;
-    padding: 6px; max-height: 440px; box-shadow: 0 10px 30px rgba(0,0,0,.5);
+    padding: 6px; max-height: 440px; overflow: hidden; box-shadow: 0 10px 30px rgba(0,0,0,.5);
   }
   #searchResults.open { display: block; }
   .sr-filters { display: flex; flex-direction: column; gap: 3px; padding: 2px 3px 6px; border-bottom: 1px solid #262c39; }
   .sr-filter-row { display: flex; flex-wrap: wrap; gap: 4px; }
   .sr-chip { font-size: 10px; padding: 2px 7px; border: 1px solid #2f3646; border-radius: 999px; background: transparent; color: #8b93a7; }
   .sr-chip.active { background: #312e81; border-color: #6366f1; color: #e0e7ff; }
-  .sr-main { display: flex; gap: 4px; margin-top: 4px; }
-  .sr-timeline { position: relative; flex: 0 0 auto; width: 12px; margin: 2px 3px; }
-  .sr-tick { position: absolute; left: 0; width: 12px; height: 6px; padding: 0; border: none; border-radius: 3px; background: #3f4b63; transform: translateY(-50%); }
-  .sr-tick:hover { background: #6366f1; }
+  .sr-main { display: flex; gap: 4px; margin-top: 2px; }
   .sr-list { flex: 1; min-width: 0; overflow-y: auto; max-height: 340px; }
+  .sr-timebar { display: flex; align-items: center; gap: 8px; padding: 8px 9px 4px; }
+  .sr-timebar[hidden] { display: none; }
+  .sr-timebar-track { position: relative; flex: 1; height: 6px; border-radius: 3px; background: #2a3140; cursor: pointer; }
+  .sr-timebar-fill { position: absolute; left: 0; top: 0; bottom: 0; width: 0%; border-radius: 3px; background: #4f46e5; opacity: .5; }
+  .sr-timebar-thumb { position: absolute; top: 50%; left: 0%; width: 12px; height: 12px; margin-left: -6px; transform: translateY(-50%); border-radius: 50%; background: #818cf8; border: 2px solid #1b2130; }
+  .sr-timebar-label { flex: 0 0 auto; min-width: 56px; text-align: right; font-size: 10px; color: #8b93a7; }
+  .sr-timelist { position: absolute; left: 6px; right: 6px; bottom: 6px; z-index: 10; max-height: 220px; overflow-y: auto; padding: 6px; border: 1px solid #2f3646; border-radius: 8px; background: #171b24; box-shadow: 0 -6px 20px rgba(0,0,0,.5); }
+  .sr-timelist[hidden] { display: none; }
+  .sr-timelist-item { display: flex; align-items: center; justify-content: space-between; width: 100%; text-align: left; padding: 4px 9px; border: none; background: transparent; color: #cbd5e1; border-radius: 5px; font-size: 12px; }
+  .sr-timelist-item.active { background: #312e81; color: #e0e7ff; }
   .sr-item { display: block; width: 100%; text-align: left; padding: 7px 9px; margin-bottom: 3px; }
   .sr-item .sr-sub { font-size: 11px; color: #8b93a7; }
   .sr-item .sr-sub.sr-unlinked { color: #eab308; }
