@@ -462,6 +462,19 @@
   .context-viewer .inspector-bar button { touch-action: auto; }
   .file-viewer .inspector-bar { cursor: grab; touch-action: none; flex: none; }
   .context-viewer-body { flex: 1; min-height: 0; overflow-y: auto; padding-right: 2px; }
+  /* 会话正文滚动容器：包住正文与「回到底部」按钮，按钮贴在滚动条旁。 */
+  .context-viewer-scroll { position: relative; flex: 1; min-height: 0; display: flex; }
+  .context-viewer-scroll .context-viewer-body { flex: 1; min-height: 0; }
+  .context-scroll-bottom {
+    position: absolute; right: 16px; bottom: 12px; z-index: 3;
+    width: 30px; height: 30px; padding: 0; border-radius: 50%;
+    display: inline-flex; align-items: center; justify-content: center;
+    background: var(--nx-btn-bg, #1e2330); color: var(--nx-btn-text, #e6e8ee);
+    border: 1px solid var(--nx-btn-border, #2f3646);
+    box-shadow: 0 3px 10px rgba(0, 0, 0, .4);
+  }
+  .context-scroll-bottom[hidden] { display: none; }
+  .context-scroll-bottom:hover { background: var(--nx-btn-hover, #272d3d); }
   .context-questions { flex: 0 1 auto; min-height: 0; max-height: min(40vh, 320px); overflow-y: auto; border-top: 1px solid #394150; padding: 8px 2px; }
   .context-questions[hidden] { display: none; }
   .context-questions .section-title { color: #b9d7e8; font-size: 12px; }

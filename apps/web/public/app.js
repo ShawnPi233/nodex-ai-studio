@@ -3905,6 +3905,19 @@ async function answerContextQuestion(viewer, reject = false) {
   }
 }
 
+/**
+ * 「回到底部」按钮：内容超出且已向上滚离底部时显示，点击平滑回到底部；
+ * 贴在纵向滚动条旁（见 app.css 的 .context-scroll-bottom）。
+ */
+function updateContextScrollButton(viewer) {
+  const button = viewer.querySelector(".context-scroll-bottom")
+  const body = viewer.querySelector(".context-viewer-body")
+  if (!button || !body) return
+  const scrollable = body.scrollHeight - body.clientHeight > 24
+  const nearBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 48
+  button.hidden = !scrollable || nearBottom
+}
+
 async function reloadContextViewer(nodeId) {
   const viewer = contextWindows.get(nodeId)
   if (!viewer) return
@@ -3972,6 +3985,7 @@ async function reloadContextViewer(nodeId) {
     }
     viewer.contextLoadError = Boolean(loadError)
     body.scrollTop = follow ? body.scrollHeight : scrollTop
+    updateContextScrollButton(viewer)
   } catch (error) {
     if (contextWindows.get(nodeId) === viewer) {
       viewer.contextLoadError = true
@@ -4110,6 +4124,7 @@ async function sendContextMessage(viewer, { fromQueue = false } = {}) {
   messages.querySelector(".muted")?.remove()
   messages.insertAdjacentHTML("beforeend", `<div class="context-message user is-new"><div class="msg-role">我</div><div class="msg-text">${renderMarkdown(text)}</div></div><div class="context-message assistant is-new is-running"><div class="msg-role">助手 <span class="msg-progress"><span class="msg-progress-spinner" aria-hidden="true"></span><span class="msg-progress-label">等待响应</span></span></div><details class="thinking" open hidden><summary>思考过程</summary><pre class="thinking-text"></pre></details><div class="msg-text"></div></div>`)
   body.scrollTop = body.scrollHeight
+  updateContextScrollButton(viewer)
   const assistant = messages?.lastElementChild
   const reply = assistant?.querySelector(".msg-text")
   const thinking = assistant?.querySelector(".thinking")
@@ -4125,6 +4140,7 @@ async function sendContextMessage(viewer, { fromQueue = false } = {}) {
     linkifyText(reply)
     assistant.classList.add("has-text")
     if (follow) body.scrollTop = body.scrollHeight
+    updateContextScrollButton(viewer)
   }
   try {
     const payload = commandMatch ? { command: commandMatch[1], arguments: commandMatch[2] ?? "" } : { text }
@@ -4381,6 +4397,14 @@ function attachContextViewer(viewer) {
     }
   })
   enablePathDrop(viewer, () => viewer.querySelector(".context-prompt"))
+  const scrollBody = viewer.querySelector(".context-viewer-body")
+  scrollBody.addEventListener("scroll", () => updateContextScrollButton(viewer), { passive: true })
+  viewer.querySelector(".context-scroll-bottom").onclick = () => {
+    const body = viewer.querySelector(".context-viewer-body")
+    const smooth = !window.matchMedia?.("(prefers-reduced-motion: reduce)").matches
+    body.scrollTo({ top: body.scrollHeight, behavior: smooth ? "smooth" : "auto" })
+    updateContextScrollButton(viewer)
+  }
   viewer.querySelector(".context-viewer-close").onclick = () => closeContextViewer(viewer)
   viewer.querySelector(".context-viewer-persist").onclick = () => toggleWindowPersist(viewer)
   viewer.querySelector(".context-viewer-rename").onclick = () => startTitleRename(
