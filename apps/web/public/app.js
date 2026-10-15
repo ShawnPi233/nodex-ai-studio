@@ -3928,20 +3928,54 @@ function updateContextScrollButton(viewer) {
   const scrollable = body.scrollHeight - body.clientHeight > 24
   const nearBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 48
   button.hidden = !scrollable || nearBottom
+  viewer.stickBottom = nearBottom
 }
 
 /** 单条消息的 HTML（复用于整表渲染与增量渲染，避免两处模板漂移）。 */
-function contextMessageHtml(m, viewer) {
+function contextMessageHtml(m, viewer, format = true) {
   const hasText = Boolean(m.text.trim())
   const checked = viewer.selectedMessageIds.has(m.id) ? "checked" : ""
   const who = m.role === "user" ? "我" : "助手"
   const ranges = hasText
     ? `<button type="button" class="context-range-btn start" data-range="start" data-mid="${escapeHtml(m.id)}" title="从这条到最新；再点终点可限定区间" aria-label="从这条消息开始" aria-pressed="false">[</button><button type="button" class="context-range-btn" data-range="end" data-mid="${escapeHtml(m.id)}" title="从最早到这条；再点起点可限定区间" aria-label="到这条消息结束" aria-pressed="false">]</button>`
     : ""
+  // format=false 时先用转义原文占位（.msg-text 是 pre-wrap），随后分批补 Markdown，
+  // 避免长会话在首次打开时一次性渲染几百条消息而卡住主线程。
+  const bodyHtml = format ? renderMarkdown(m.text) : escapeHtml(m.text)
   return `<div class="context-message ${m.role === "user" ? "user" : "assistant"}" data-mid="${escapeHtml(m.id)}">`
     + `<div class="msg-role"><input type="checkbox" class="context-message-check" data-mid="${escapeHtml(m.id)}" data-empty="${!hasText}" aria-label="选择${who}的消息" ${checked} ${hasText ? "" : "disabled"} /><span>${who}</span>${ranges}</div>`
     + (m.reasoning ? `<details class="thinking"><summary>思考过程</summary><pre class="thinking-text">${escapeHtml(m.reasoning)}</pre></details>` : "")
-    + `<div class="msg-text">${renderMarkdown(m.text)}</div></div>`
+    + `<div class="msg-text">${bodyHtml}</div></div>`
+}
+
+/**
+ * 分批把占位原文补成 Markdown（每帧若干条），保持主线程响应；
+ * 若用户原本在底部，补渲染过程中继续贴底，避免内容增高时视图漂移。
+ */
+function queueContextFormat(viewer, elements) {
+  if (!elements.length) return
+  viewer.formatQueue = (viewer.formatQueue ?? []).concat(elements)
+  if (viewer.formatScheduled) return
+  viewer.formatScheduled = true
+  const step = () => {
+    viewer.formatScheduled = false
+    if (!contextWindows.get(viewer.dataset.nodeId)) { viewer.formatQueue = []; return }
+    const byId = new Map((viewer.lastMessages ?? []).map((m) => [m.id, m]))
+    let budget = 8
+    while ((viewer.formatQueue?.length ?? 0) && budget-- > 0) {
+      const el = viewer.formatQueue.shift()
+      if (!el.isConnected) continue
+      const message = byId.get(el.dataset.mid)
+      const target = el.querySelector(".msg-text")
+      if (message && target) { target.innerHTML = renderMarkdown(message.text); linkifyText(target) }
+    }
+    if (viewer.stickBottom) {
+      const body = viewer.querySelector(".context-viewer-body")
+      if (body) body.scrollTop = body.scrollHeight
+    }
+    if (viewer.formatQueue?.length) { viewer.formatScheduled = true; requestAnimationFrame(step) }
+  }
+  requestAnimationFrame(step)
 }
 
 /**
@@ -3968,18 +4002,19 @@ function renderContextMessages(viewer, container, messages) {
   for (const el of container.children) if (el.dataset?.mid) known.set(el.dataset.mid, el)
   const kept = new Map()
   const order = []
+  const freshNodes = []
   for (const m of messages) {
     order.push(m.id)
     const signature = messageSignature(m)
     const existing = known.get(m.id)
     if (existing && existing.dataset.sig === signature) { kept.set(m.id, existing); continue }
     const holder = document.createElement("div")
-    holder.innerHTML = contextMessageHtml(m, viewer)
+    holder.innerHTML = contextMessageHtml(m, viewer, false)
     const fresh = holder.firstElementChild
     fresh.dataset.sig = signature
     if (existing) existing.replaceWith(fresh)
     else container.appendChild(fresh)
-    fresh.querySelectorAll(".msg-text").forEach(linkifyText)
+    freshNodes.push(fresh)
     kept.set(m.id, fresh)
   }
   for (const [id, el] of known) if (!kept.has(id)) el.remove()
@@ -3987,6 +4022,8 @@ function renderContextMessages(viewer, container, messages) {
   const sameOrder = previousOrder.length === order.length && previousOrder.every((id, index) => id === order[index])
   if (!sameOrder) for (const id of order) container.appendChild(kept.get(id))
   viewer.renderedMessageOrder = order
+  // 新元素先以原文占位，随后分批补 Markdown（long 会话首屏不再一次性渲染全部消息）。
+  queueContextFormat(viewer, freshNodes)
 }
 
 async function reloadContextViewer(nodeId) {
@@ -4038,6 +4075,7 @@ async function reloadContextViewer(nodeId) {
       viewer.contextHeaderEl = head
       viewer.messagesEl = list
       viewer.renderedMessageOrder = []
+      viewer.formatQueue = []
     }
     viewer.contextHeaderEl.innerHTML = `
       <div class="context-summary"><strong>上下文用量</strong><span class="muted">${c.usedTokens.toLocaleString()} / ${budget.toLocaleString()} tokens</span></div>
@@ -4062,6 +4100,7 @@ async function reloadContextViewer(nodeId) {
       body.prepend(banner)
     }
     viewer.contextLoadError = Boolean(loadError)
+    viewer.stickBottom = follow
     body.scrollTop = follow ? body.scrollHeight : scrollTop
     updateContextScrollButton(viewer)
   } catch (error) {
