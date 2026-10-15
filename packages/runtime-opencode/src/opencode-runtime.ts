@@ -94,6 +94,8 @@ function toSession(raw: any): RuntimeSession {
     title: raw.title ?? "",
     parentId: raw.parentID ?? raw.parentId,
   }
+  if (typeof raw.time?.created === "number") session.created = raw.time.created
+  if (typeof raw.time?.updated === "number") session.updated = raw.time.updated
   if (raw.revert?.messageID) session.revert = { messageID: raw.revert.messageID }
   return session
 }

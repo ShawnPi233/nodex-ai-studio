@@ -100,6 +100,11 @@
   #searchResults.open { display: block; }
   .sr-item { display: block; width: 100%; text-align: left; padding: 7px 9px; margin-bottom: 3px; }
   .sr-item .sr-sub { font-size: 11px; color: #8b93a7; }
+  .sr-item .sr-sub.sr-unlinked { color: #eab308; }
+  .sr-section-title { font-size: 10px; font-weight: 600; color: #8b93a7; padding: 5px 9px 2px; }
+  .sr-section-title + .sr-section-title { margin-top: 4px; }
+  #searchResults .sr-section-title:not(:first-child) { margin-top: 6px; border-top: 1px solid #262c39; padding-top: 8px; }
+  .sr-day { font-size: 10px; color: #6b7280; padding: 4px 9px 1px; }
 
   #toolbar {
     top: 58px; left: 12px; right: 12px; display: flex; flex-wrap: wrap; gap: 6px 8px;

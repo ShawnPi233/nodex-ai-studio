@@ -9,6 +9,10 @@ export interface RuntimeSession {
   id: string
   title: string
   parentId?: string
+  /** 会话创建时间（epoch ms），用于按日期浏览。 */
+  created?: number
+  /** 会话最近更新时间（epoch ms）。 */
+  updated?: number
   /** OpenCode 原生 revert 状态：该 messageID 及其之后的对话视为已撤销。 */
   revert?: { messageID?: string }
 }

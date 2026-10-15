@@ -62,6 +62,15 @@ test("会话读取归一化父会话字段", async () => {
   assert.equal(children[0].parentId, "ses_1")
 })
 
+test("会话读取保留创建 / 更新时间供按日期浏览", async () => {
+  const client = fakeClient()
+  client.session.list = async () => ({ data: [{ id: "ses_1", title: "t", time: { created: 1700000000000, updated: 1700000009999 } }] })
+  const rt = new OpencodeRuntime({ client: client as any })
+  assert.deepEqual(await rt.listSessions(), [
+    { id: "ses_1", title: "t", parentId: undefined, created: 1700000000000, updated: 1700000009999 },
+  ])
+})
+
 test("保留 OpenCode 助手消息的完成信息", async () => {
   const client = fakeClient()
   client.session.messages = async () => ({ data: [{ info: { id: "done", role: "assistant", finish: "stop", time: { completed: 1234 } }, parts: [{ type: "text", text: "完成" }] }] })

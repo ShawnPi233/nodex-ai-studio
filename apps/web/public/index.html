@@ -64,6 +64,14 @@
     <div id="newNodeDialogError" class="msg error" role="alert"></div>
     <form method="dialog" class="row end"><button type="button" id="newNodeDialogCancel">取消</button><button type="submit" id="newNodeDialogOk" class="primary">创建节点</button></form>
   </dialog>
+  <dialog id="attachSessionDialog" class="node-delete-dialog" aria-labelledby="attachSessionTitle">
+    <h3 id="attachSessionTitle">为 OpenCode 会话创建节点？</h3>
+    <p id="attachSessionText"></p>
+    <label class="field"><span>节点名称</span><input id="attachSessionName" type="text" maxlength="60" autocomplete="off" placeholder="输入节点名称" /></label>
+    <label class="field"><span>加入页面</span><select id="attachSessionPage"></select></label>
+    <div id="attachSessionError" class="msg error" role="alert"></div>
+    <form method="dialog" class="row end"><button type="button" id="attachSessionCancel">取消</button><button type="submit" id="attachSessionOk" class="primary">创建节点</button></form>
+  </dialog>
   <dialog id="newComposeDialog" class="node-delete-dialog" aria-labelledby="newComposeTitle">
     <h3 id="newComposeTitle">新建协作模板</h3>
     <p id="newComposeText">为当前未连接的节点创建协作模板：选择结构类型并设置人数，当前节点作为主角色，其余槽位新建空节点。创建后用 <code>/compose 任务</code> 启动。</p>
@@ -114,7 +122,7 @@
     <button id="aiSettingsBtn" title="AI 模型与 API Key（用于笔记本摘要等）">AI 设置</button>
     <button id="addWorkspace" title="页面管理（改名 / 合并 / 删除）">页面管理</button>
     <div class="search-wrap">
-      <input id="search" placeholder="搜索节点（标题 / 标签 / 页面）…" autocomplete="off" />
+      <input id="search" placeholder="搜索节点 / OpenCode 会话（按日期浏览）…" autocomplete="off" />
       <div id="searchResults"></div>
     </div>
     <label class="model-pick" title="主模型：来自 OpenCode 配置的可用模型">

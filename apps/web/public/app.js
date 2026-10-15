@@ -7895,6 +7895,50 @@ newNodeDialog.querySelector("#newNodeDialogName").addEventListener("keydown", (e
   newNodeDialog.close("confirm")
 })
 
+// ---------------- 为未关联的 OpenCode 会话创建节点 ----------------
+const attachSessionDialog = document.getElementById("attachSessionDialog")
+
+/** 弹窗：把未关联的 OpenCode 会话创建为节点，可选节点名称与页面分类。 */
+function promptAttachSession({ title = "为 OpenCode 会话创建节点？", text = "", defaultName = "", defaultPage = "", workspaces = [] } = {}) {
+  attachSessionDialog.querySelector("#attachSessionTitle").textContent = title
+  const textEl = attachSessionDialog.querySelector("#attachSessionText")
+  textEl.textContent = text
+  textEl.hidden = !text
+  const nameInput = attachSessionDialog.querySelector("#attachSessionName")
+  nameInput.value = defaultName
+  const pageSelect = attachSessionDialog.querySelector("#attachSessionPage")
+  pageSelect.innerHTML = '<option value="">不加入页面</option>' +
+    workspaces.map((w) => `<option value="${escapeHtml(w.id)}">${escapeHtml(w.name)}</option>`).join("")
+  pageSelect.value = defaultPage && workspaces.some((w) => w.id === defaultPage) ? defaultPage : ""
+  attachSessionDialog.querySelector("#attachSessionError").textContent = ""
+  attachSessionDialog.returnValue = "cancel"
+  attachSessionDialog.showModal()
+  nameInput.focus()
+  nameInput.select()
+  return new Promise((resolve) => attachSessionDialog.addEventListener("close", () => {
+    resolve({ ok: attachSessionDialog.returnValue === "confirm", name: nameInput.value.trim(), workspaceId: pageSelect.value })
+  }, { once: true }))
+}
+
+function validateAttachName() {
+  const input = attachSessionDialog.querySelector("#attachSessionName")
+  const name = input.value.trim()
+  if (!name) {
+    attachSessionDialog.querySelector("#attachSessionError").textContent = "请输入节点名称"
+    input.focus()
+    return null
+  }
+  return name
+}
+attachSessionDialog.querySelector("form").addEventListener("submit", (event) => {
+  event.preventDefault()
+  const name = validateAttachName()
+  if (!name) return
+  attachSessionDialog.querySelector("#attachSessionName").value = name
+  attachSessionDialog.close("confirm")
+})
+attachSessionDialog.querySelector("#attachSessionCancel").onclick = () => attachSessionDialog.close("cancel")
+
 // ---------------- /new_compose：为未连接节点新建协作模板 ----------------
 const newComposeDialog = document.getElementById("newComposeDialog")
 const newComposeKind = document.getElementById("newComposeKind")
@@ -9656,43 +9700,118 @@ async function mergeWorkspaces() {
 const searchInput = document.getElementById("search")
 const searchResults = document.getElementById("searchResults")
 
-function runSearch() {
+// OpenCode 会话列表短期缓存，避免每次输入都请求。
+let sessionsCache = { at: 0, sessions: [] }
+async function loadOpencodeSessions(force = false) {
+  if (!force && Date.now() - sessionsCache.at < 8000) return sessionsCache.sessions
+  try {
+    const data = await api("/sessions")
+    sessionsCache = { at: Date.now(), sessions: Array.isArray(data.sessions) ? data.sessions : [] }
+  } catch { /* 保留旧数据 */ }
+  return sessionsCache.sessions
+}
+
+function dayKeyOf(ms) {
+  const d = new Date(ms)
+  if (!Number.isFinite(ms) || Number.isNaN(d.getTime())) return "未知日期"
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`
+}
+function dayLabelOf(key) {
+  const now = Date.now()
+  if (key === dayKeyOf(now)) return "今天"
+  if (key === dayKeyOf(now - 86400000)) return "昨天"
+  return key
+}
+/** 按天分组并按日期倒序；每项用 getMs 取 epoch ms。 */
+function groupByDay(items, getMs) {
+  const groups = new Map()
+  for (const item of items) {
+    const key = dayKeyOf(getMs(item) ?? 0)
+    if (!groups.has(key)) groups.set(key, [])
+    groups.get(key).push(item)
+  }
+  return [...groups.entries()].sort((a, b) => b[0].localeCompare(a[0]))
+}
+function pagesOfNodeText(nodeId) {
+  return workspacesOfNode(nodeId).map((id) => state.graph.workspaces.find((w) => w.id === id)?.name ?? id).join(" · ")
+}
+
+let searchToken = 0
+async function runSearch(force = false) {
   const q = searchInput.value.trim().toLowerCase()
-  if (!q) {
-    searchResults.classList.remove("open")
-    searchResults.innerHTML = ""
-    return
-  }
-  const hits = state.graph.nodes
-    .filter((n) => {
-      const pages = workspacesOfNode(n.id)
-        .map((id) => state.graph.workspaces.find((w) => w.id === id)?.name ?? id)
-      const hay = [n.title, ...(n.tags || []), ...pages].join(" ").toLowerCase()
-      return hay.includes(q)
-    })
-    .slice(0, 12)
+  const token = ++searchToken
+  const sessions = await loadOpencodeSessions(force)
+  if (token !== searchToken) return
 
-  if (!hits.length) {
-    searchResults.innerHTML = '<span class="muted">没有匹配的节点</span>'
-    searchResults.classList.add("open")
-    return
-  }
-
-  searchResults.innerHTML = hits
-    .map((n) => {
-      const pages = workspacesOfNode(n.id)
-        .map((id) => state.graph.workspaces.find((w) => w.id === id)?.name ?? id)
-        .join(" · ")
-      return `<button class="sr-item" data-goto="${escapeHtml(n.id)}">
-        <div>${escapeHtml(nodeDisplayTitle(n.id))}</div>
-        <div class="sr-sub">${escapeHtml(pages || "未加入页面")}</div>
-      </button>`
-    })
-    .join("")
-  searchResults.classList.add("open")
-  searchResults.querySelectorAll("[data-goto]").forEach((el) => {
-    el.onclick = () => gotoNode(el.dataset.goto)
+  const nodes = state.graph.nodes.filter((n) => {
+    if (!q) return true
+    const pages = workspacesOfNode(n.id).map((id) => state.graph.workspaces.find((w) => w.id === id)?.name ?? id)
+    return [n.title, ...(n.tags || []), ...pages].join(" ").toLowerCase().includes(q)
   })
+  const matchedSessions = sessions.filter((s) => {
+    if (!q) return true
+    const node = s.nodeId ? state.nodesById?.get(s.nodeId) : null
+    return [s.title, s.id, node?.title, node?.id].filter(Boolean).join(" ").toLowerCase().includes(q)
+  })
+
+  const cap = (list) => list.slice(0, 60)
+  const nodeSection = nodes.length
+    ? `<div class="sr-section-title">现有节点 · ${nodes.length}</div>` + groupByDay(cap(nodes), (n) => Date.parse(n.createdAt) || 0).map(([key, list]) =>
+        `<div class="sr-day">${escapeHtml(dayLabelOf(key))}</div>` + list.map((n) =>
+          `<button class="sr-item" data-goto="${escapeHtml(n.id)}"><div>${escapeHtml(nodeDisplayTitle(n.id))}</div><div class="sr-sub">${escapeHtml(pagesOfNodeText(n.id) || "未加入页面")}</div></button>`,
+        ).join(""),
+      ).join("")
+    : ""
+  const sessionSection = matchedSessions.length
+    ? `<div class="sr-section-title">OpenCode 会话 · ${matchedSessions.length}</div>` + groupByDay(cap(matchedSessions), (s) => s.created || s.updated || 0).map(([key, list]) =>
+        `<div class="sr-day">${escapeHtml(dayLabelOf(key))}</div>` + list.map((s) => {
+          const sub = s.nodeId
+            ? `<div class="sr-sub">关联节点：${escapeHtml(nodeDisplayTitle(s.nodeId))} · ${escapeHtml(pagesOfNodeText(s.nodeId) || "未加入页面")}</div>`
+            : '<div class="sr-sub sr-unlinked">未关联节点 · 点击创建</div>'
+          const attr = s.nodeId ? `data-goto="${escapeHtml(s.nodeId)}"` : `data-attach="${escapeHtml(s.id)}"`
+          return `<button class="sr-item" ${attr}><div>${escapeHtml(s.title || s.id)}</div>${sub}</button>`
+        }).join(""),
+      ).join("")
+    : ""
+
+  searchResults.innerHTML = nodeSection + sessionSection ||
+    `<span class="muted">${q ? "没有匹配的节点或会话" : "暂无节点或会话"}</span>`
+  searchResults.classList.add("open")
+  searchResults.querySelectorAll("[data-goto]").forEach((el) => { el.onclick = () => gotoNode(el.dataset.goto) })
+  searchResults.querySelectorAll("[data-attach]").forEach((el) => {
+    el.onclick = () => {
+      const session = sessions.find((item) => item.id === el.dataset.attach)
+      if (session) void attachSessionAsNode(session)
+    }
+  })
+}
+
+/** 从 OpenCode 会话创建一个新节点（弹窗选择名称与页面分类）。 */
+async function attachSessionAsNode(session) {
+  searchResults.classList.remove("open")
+  const workspaces = state.graph.workspaces ?? []
+  const choice = await promptAttachSession({
+    title: "为 OpenCode 会话创建节点？",
+    text: session.title || session.id,
+    defaultName: session.title || session.id,
+    defaultPage: state.activeWs && workspaces.some((w) => w.id === state.activeWs) ? state.activeWs : "",
+    workspaces,
+  })
+  if (!choice.ok) return
+  try {
+    const node = await api(`/sessions/${encodeURIComponent(session.id)}/attach`, {
+      method: "POST", body: JSON.stringify({ workspaceId: choice.workspaceId || undefined }),
+    })
+    if (choice.name && choice.name !== node.title) {
+      await api(`/nodes/${node.id}`, { method: "PATCH", body: JSON.stringify({ title: choice.name }) })
+    }
+    sessionsCache.at = 0
+    await refresh()
+    searchInput.value = ""
+    await gotoNode(node.id)
+  } catch (error) {
+    statusEl.textContent = "创建节点失败：" + error.message
+  }
 }
 
 /** 跳转到某个节点：切到包含它的页面（优先非当前页），并选中、居中。 */
@@ -9719,7 +9838,8 @@ function gotoNode(nodeId) {
   renderTabs()
 }
 
-searchInput.addEventListener("input", runSearch)
+searchInput.addEventListener("focus", () => void runSearch(true))
+searchInput.addEventListener("input", () => void runSearch())
 searchInput.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {
     searchInput.value = ""
