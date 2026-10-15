@@ -93,17 +93,31 @@
     border-radius: 7px; padding: 7px 10px; font: inherit; font-size: 12px;
   }
   #searchResults {
-    display: none; position: absolute; top: 110%; left: 0; right: 0; z-index: 9;
+    display: none; position: absolute; top: 110%; left: 0; z-index: 9; width: min(460px, 94vw);
     background: rgba(18,21,28,.98); border: 1px solid #3a4152; border-radius: 10px;
-    padding: 6px; max-height: 320px; overflow-y: auto; box-shadow: 0 10px 30px rgba(0,0,0,.5);
+    padding: 6px; max-height: 440px; box-shadow: 0 10px 30px rgba(0,0,0,.5);
   }
   #searchResults.open { display: block; }
+  .sr-filters { display: flex; flex-direction: column; gap: 3px; padding: 2px 3px 6px; border-bottom: 1px solid #262c39; }
+  .sr-filter-row { display: flex; flex-wrap: wrap; gap: 4px; }
+  .sr-chip { font-size: 10px; padding: 2px 7px; border: 1px solid #2f3646; border-radius: 999px; background: transparent; color: #8b93a7; }
+  .sr-chip.active { background: #312e81; border-color: #6366f1; color: #e0e7ff; }
+  .sr-main { display: flex; gap: 4px; margin-top: 4px; }
+  .sr-timeline { position: relative; flex: 0 0 auto; width: 12px; margin: 2px 3px; }
+  .sr-tick { position: absolute; left: 0; width: 12px; height: 6px; padding: 0; border: none; border-radius: 3px; background: #3f4b63; transform: translateY(-50%); }
+  .sr-tick:hover { background: #6366f1; }
+  .sr-list { flex: 1; min-width: 0; overflow-y: auto; max-height: 340px; }
   .sr-item { display: block; width: 100%; text-align: left; padding: 7px 9px; margin-bottom: 3px; }
   .sr-item .sr-sub { font-size: 11px; color: #8b93a7; }
   .sr-item .sr-sub.sr-unlinked { color: #eab308; }
+  .sr-row { position: relative; }
+  .sr-actions { position: absolute; top: 4px; right: 3px; display: none; gap: 2px; }
+  .sr-row:hover .sr-actions { display: flex; }
+  .sr-actions button { border: none; padding: 1px 5px; border-radius: 4px; font-size: 11px; background: #1b2130; color: #8b93a7; }
+  .sr-actions button:hover { background: #312e81; color: #e6e8ee; }
   .sr-section-title { font-size: 10px; font-weight: 600; color: #8b93a7; padding: 5px 9px 2px; }
   .sr-section-title + .sr-section-title { margin-top: 4px; }
-  #searchResults .sr-section-title:not(:first-child) { margin-top: 6px; border-top: 1px solid #262c39; padding-top: 8px; }
+  .sr-list > .sr-section-title:not(:first-child) { margin-top: 6px; border-top: 1px solid #262c39; padding-top: 8px; }
   .sr-day { font-size: 10px; color: #6b7280; padding: 4px 9px 1px; }
 
   #toolbar {

@@ -9735,6 +9735,60 @@ function groupByDay(items, getMs) {
 function pagesOfNodeText(nodeId) {
   return workspacesOfNode(nodeId).map((id) => state.graph.workspaces.find((w) => w.id === id)?.name ?? id).join(" · ")
 }
+function nodeKindLabel(node) {
+  return node?.kind === "notebook" ? "笔记本" : "会话"
+}
+
+const searchFilter = { section: "all", nodeKind: "all", provider: "all" }
+
+function searchFiltersHtml(sessions) {
+  const chip = (group, value, label) =>
+    `<button type="button" class="sr-chip${searchFilter[group] === value ? " active" : ""}" data-filter="${group}" data-value="${escapeHtml(value)}">${escapeHtml(label)}</button>`
+  const rows = [`<div class="sr-filter-row">${[["all", "全部"], ["nodes", "节点"], ["sessions", "会话"]].map(([v, l]) => chip("section", v, l)).join("")}</div>`]
+  if (searchFilter.section !== "sessions") {
+    rows.push(`<div class="sr-filter-row">${[["all", "全部"], ["session", "会话"], ["notebook", "笔记"]].map(([v, l]) => chip("nodeKind", v, l)).join("")}</div>`)
+  }
+  const providers = [...new Set(sessions.map((s) => s.model?.providerID).filter(Boolean))].sort()
+  if (searchFilter.section !== "nodes" && providers.length) {
+    rows.push(`<div class="sr-filter-row">${[["all", "全部模型"], ...providers.map((p) => [p, p])].map(([v, l]) => chip("provider", v, l)).join("")}</div>`)
+  }
+  return `<div class="sr-filters">${rows.join("")}</div>`
+}
+
+function searchTimelineHtml(nodes, sessions, minMs, maxMs) {
+  const span = maxMs - minMs || 1
+  const days = new Map()
+  const put = (ms) => { if (!ms) return; const key = dayKeyOf(ms); if (!days.has(key) || ms > days.get(key)) days.set(key, ms) }
+  for (const n of nodes) put(Date.parse(n.createdAt) || 0)
+  for (const s of sessions) put(s.created || s.updated || 0)
+  return [...days.entries()].sort((a, b) => b[1] - a[1]).map(([key, ms]) =>
+    `<button type="button" class="sr-tick" data-day="${escapeHtml(key)}" style="top:${(((maxMs - ms) / span) * 100).toFixed(2)}%" title="${escapeHtml(dayLabelOf(key))}"></button>`,
+  ).join("")
+}
+
+function wireSearchResults(sessions) {
+  searchResults.querySelectorAll("[data-filter]").forEach((el) => {
+    el.onclick = () => { searchFilter[el.dataset.filter] = el.dataset.value; void runSearch() }
+  })
+  searchResults.querySelectorAll("[data-goto]").forEach((el) => { el.onclick = () => gotoNode(el.dataset.goto) })
+  searchResults.querySelectorAll("[data-attach]").forEach((el) => {
+    el.onclick = () => { const s = sessions.find((item) => item.id === el.dataset.attach); if (s) void attachSessionAsNode(s) }
+  })
+  searchResults.querySelectorAll("[data-rename-session]").forEach((el) => {
+    el.onclick = (event) => { event.stopPropagation(); const s = sessions.find((item) => item.id === el.dataset.renameSession); if (s) void renameOpencodeSession(s) }
+  })
+  searchResults.querySelectorAll("[data-delete-session]").forEach((el) => {
+    el.onclick = (event) => { event.stopPropagation(); const s = sessions.find((item) => item.id === el.dataset.deleteSession); if (s) void deleteOpencodeSession(s) }
+  })
+  const list = searchResults.querySelector(".sr-list")
+  searchResults.querySelectorAll(".sr-tick").forEach((el) => {
+    el.onclick = () => {
+      const header = list?.querySelector(`.sr-day[data-day="${CSS.escape(el.dataset.day)}"]`)
+      if (!header || !list) return
+      list.scrollTop += header.getBoundingClientRect().top - list.getBoundingClientRect().top
+    }
+  })
+}
 
 let searchToken = 0
 async function runSearch(force = false) {
@@ -9744,46 +9798,79 @@ async function runSearch(force = false) {
   if (token !== searchToken) return
 
   const nodes = state.graph.nodes.filter((n) => {
+    if (searchFilter.nodeKind !== "all" && (n.kind || "session") !== searchFilter.nodeKind) return false
     if (!q) return true
     const pages = workspacesOfNode(n.id).map((id) => state.graph.workspaces.find((w) => w.id === id)?.name ?? id)
-    return [n.title, ...(n.tags || []), ...pages].join(" ").toLowerCase().includes(q)
+    return [n.title, ...(n.tags || []), ...(n.categories || []), ...pages].join(" ").toLowerCase().includes(q)
   })
   const matchedSessions = sessions.filter((s) => {
+    if (searchFilter.provider !== "all" && (s.model?.providerID || "未知") !== searchFilter.provider) return false
     if (!q) return true
     const node = s.nodeId ? state.nodesById?.get(s.nodeId) : null
     return [s.title, s.id, node?.title, node?.id].filter(Boolean).join(" ").toLowerCase().includes(q)
   })
 
-  const cap = (list) => list.slice(0, 60)
-  const nodeSection = nodes.length
-    ? `<div class="sr-section-title">现有节点 · ${nodes.length}</div>` + groupByDay(cap(nodes), (n) => Date.parse(n.createdAt) || 0).map(([key, list]) =>
-        `<div class="sr-day">${escapeHtml(dayLabelOf(key))}</div>` + list.map((n) =>
-          `<button class="sr-item" data-goto="${escapeHtml(n.id)}"><div>${escapeHtml(nodeDisplayTitle(n.id))}</div><div class="sr-sub">${escapeHtml(pagesOfNodeText(n.id) || "未加入页面")}</div></button>`,
-        ).join(""),
-      ).join("")
+  const nodeList = searchFilter.section === "sessions" ? [] : nodes
+  const sessionList = searchFilter.section === "nodes" ? [] : matchedSessions
+  const cap = (list) => list.slice(0, 80)
+  const dayBlock = (items, getMs, rowHtml) => groupByDay(cap(items), getMs).map(([key, list]) =>
+    `<div class="sr-day" data-day="${escapeHtml(key)}">${escapeHtml(dayLabelOf(key))}</div>` + list.map(rowHtml).join(""),
+  ).join("")
+
+  const nodeSection = nodeList.length
+    ? `<div class="sr-section-title">现有节点 · ${nodeList.length}</div>` + dayBlock(nodeList, (n) => Date.parse(n.createdAt) || 0, (n) =>
+        `<button class="sr-item" data-goto="${escapeHtml(n.id)}"><div>${escapeHtml(nodeDisplayTitle(n.id))}</div><div class="sr-sub">${escapeHtml([nodeKindLabel(n), pagesOfNodeText(n.id) || "未加入页面"].join(" · "))}</div></button>`,
+      )
     : ""
-  const sessionSection = matchedSessions.length
-    ? `<div class="sr-section-title">OpenCode 会话 · ${matchedSessions.length}</div>` + groupByDay(cap(matchedSessions), (s) => s.created || s.updated || 0).map(([key, list]) =>
-        `<div class="sr-day">${escapeHtml(dayLabelOf(key))}</div>` + list.map((s) => {
-          const sub = s.nodeId
-            ? `<div class="sr-sub">关联节点：${escapeHtml(nodeDisplayTitle(s.nodeId))} · ${escapeHtml(pagesOfNodeText(s.nodeId) || "未加入页面")}</div>`
-            : '<div class="sr-sub sr-unlinked">未关联节点 · 点击创建</div>'
-          const attr = s.nodeId ? `data-goto="${escapeHtml(s.nodeId)}"` : `data-attach="${escapeHtml(s.id)}"`
-          return `<button class="sr-item" ${attr}><div>${escapeHtml(s.title || s.id)}</div>${sub}</button>`
-        }).join(""),
-      ).join("")
+  const sessionSection = sessionList.length
+    ? `<div class="sr-section-title">OpenCode 会话 · ${sessionList.length}</div>` + dayBlock(sessionList, (s) => s.created || s.updated || 0, (s) => {
+        const sub = s.nodeId
+          ? `<div class="sr-sub">关联节点：${escapeHtml(nodeDisplayTitle(s.nodeId))} · ${escapeHtml(pagesOfNodeText(s.nodeId) || "未加入页面")}</div>`
+          : '<div class="sr-sub sr-unlinked">未关联节点 · 点击创建</div>'
+        const attr = s.nodeId ? `data-goto="${escapeHtml(s.nodeId)}"` : `data-attach="${escapeHtml(s.id)}"`
+        return `<div class="sr-row"><button class="sr-item" ${attr}><div>${escapeHtml(s.title || s.id)}</div>${sub}</button><div class="sr-actions"><button type="button" data-rename-session="${escapeHtml(s.id)}" title="重命名会话">✎</button><button type="button" data-delete-session="${escapeHtml(s.id)}" title="删除会话">🗑</button></div></div>`
+      })
     : ""
 
-  searchResults.innerHTML = nodeSection + sessionSection ||
-    `<span class="muted">${q ? "没有匹配的节点或会话" : "暂无节点或会话"}</span>`
+  const stamps = [...nodeList.map((n) => Date.parse(n.createdAt) || 0), ...sessionList.map((s) => s.created || s.updated || 0)].filter((v) => v > 0)
+  const minMs = stamps.length ? Math.min(...stamps) : 0
+  const maxMs = stamps.length ? Math.max(...stamps) : 0
+  const timeline = stamps.length ? `<div class="sr-timeline">${searchTimelineHtml(nodeList, sessionList, minMs, maxMs)}</div>` : ""
+  const empty = !nodeSection && !sessionSection ? `<div class="muted" style="padding:8px">${q ? "没有匹配的节点或会话" : "暂无节点或会话"}</div>` : ""
+
+  searchResults.innerHTML = searchFiltersHtml(sessions) +
+    `<div class="sr-main">${timeline}<div class="sr-list">${nodeSection}${sessionSection}${empty}</div></div>`
   searchResults.classList.add("open")
-  searchResults.querySelectorAll("[data-goto]").forEach((el) => { el.onclick = () => gotoNode(el.dataset.goto) })
-  searchResults.querySelectorAll("[data-attach]").forEach((el) => {
-    el.onclick = () => {
-      const session = sessions.find((item) => item.id === el.dataset.attach)
-      if (session) void attachSessionAsNode(session)
-    }
-  })
+  wireSearchResults(sessions)
+}
+
+/** 重命名原生 OpenCode 会话。 */
+async function renameOpencodeSession(session) {
+  const { ok, name } = await fsPrompt({ title: "重命名 OpenCode 会话", label: "会话标题", value: session.title || session.id })
+  if (!ok || !name) return
+  try {
+    await api(`/sessions/${encodeURIComponent(session.id)}`, { method: "PATCH", body: JSON.stringify({ title: name }) })
+    sessionsCache.at = 0
+    await runSearch(true)
+  } catch (error) {
+    statusEl.textContent = "重命名会话失败：" + error.message
+  }
+}
+
+/** 删除原生 OpenCode 会话。 */
+async function deleteOpencodeSession(session) {
+  const warn = session.nodeId
+    ? `该会话已关联节点「${nodeDisplayTitle(session.nodeId)}」；删除后该节点将失去会话。`
+    : "该会话未关联任何节点。"
+  const ok = await confirmDanger("删除 OpenCode 会话？", `${session.title || session.id}\n${warn}`, "删除会话")
+  if (!ok) return
+  try {
+    await api(`/sessions/${encodeURIComponent(session.id)}`, { method: "DELETE" })
+    sessionsCache.at = 0
+    await runSearch(true)
+  } catch (error) {
+    statusEl.textContent = "删除会话失败：" + error.message
+  }
 }
 
 /** 从 OpenCode 会话创建一个新节点（弹窗选择名称与页面分类）。 */

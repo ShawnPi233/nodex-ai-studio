@@ -13,6 +13,10 @@ export interface RuntimeSession {
   created?: number
   /** 会话最近更新时间（epoch ms）。 */
   updated?: number
+  /** 使用的 agent（build / plan 等），用于类型筛选。 */
+  agent?: string
+  /** 使用的模型（providerID / modelID），用于类型筛选。 */
+  model?: { providerID?: string; modelID?: string }
   /** OpenCode 原生 revert 状态：该 messageID 及其之后的对话视为已撤销。 */
   revert?: { messageID?: string }
 }
@@ -142,6 +146,8 @@ export interface AgentRuntime {
   listSessions(): Promise<RuntimeSession[]>
   getSession(id: string): Promise<RuntimeSession>
   children(id: string): Promise<RuntimeSession[]>
+  /** 更新原生会话（如重命名标题）。 */
+  updateSession(id: string, patch: { title?: string }): Promise<RuntimeSession>
   deleteSession(id: string): Promise<boolean>
 
   messages(sessionId: string): Promise<RuntimeMessage[]>

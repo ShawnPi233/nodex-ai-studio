@@ -36,6 +36,7 @@ export interface OpencodeClientLike {
     create(args: { body: { parentID?: string; title?: string } }): Promise<{ data?: any }>
     list(): Promise<{ data?: any[] }>
     get(args: { path: { id: string } }): Promise<{ data?: any }>
+    update(args: { path: { id: string }; body: { title?: string } }): Promise<{ data?: any }>
     children(args: { path: { id: string } }): Promise<{ data?: any[] }>
     delete(args: { path: { id: string } }): Promise<{ data?: boolean }>
     messages(args: { path: { id: string } }): Promise<{ data?: any[] }>
@@ -96,6 +97,10 @@ function toSession(raw: any): RuntimeSession {
   }
   if (typeof raw.time?.created === "number") session.created = raw.time.created
   if (typeof raw.time?.updated === "number") session.updated = raw.time.updated
+  if (typeof raw.agent === "string") session.agent = raw.agent
+  if (raw.model && typeof raw.model === "object") {
+    session.model = { providerID: raw.model.providerID, modelID: raw.model.id ?? raw.model.modelID }
+  }
   if (raw.revert?.messageID) session.revert = { messageID: raw.revert.messageID }
   return session
 }
@@ -358,6 +363,12 @@ export class OpencodeRuntime implements AgentRuntime {
   async children(id: string) {
     const res = await this.client.session.children({ path: { id } })
     return (res.data ?? []).map(toSession)
+  }
+
+  async updateSession(id: string, patch: { title?: string }) {
+    const res = await this.client.session.update({ path: { id }, body: patch })
+    if (!res.data) throw new Error(`opencode: 更新会话未返回数据 ${id}`)
+    return toSession(res.data)
   }
 
   async deleteSession(id: string) {

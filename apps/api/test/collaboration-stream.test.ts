@@ -21,6 +21,7 @@ test("sending to the brainstorming main node runs each child before the summary 
   const statuses = new Map<string, { type: string }>()
   const pendingQuestions = new Map<string, { id: string; sessionID: string; questions: Array<{ question: string; header: string; options: Array<{ label: string; description: string }>; multiple?: boolean; custom?: boolean }> }>()
   const questionReplies: string[][][] = []
+  const deletedSessions: string[] = []
   let metaSessionCounter = 0
   const listeners = new Set<ReadableStreamDefaultController<Uint8Array>>()
   const emit = (type: string, properties: unknown) => {
@@ -58,6 +59,14 @@ test("sending to the brainstorming main node runs each child before the summary 
         return Response.json({ id, title: body.title })
       }
       if (url.pathname === "/session/ses_external" && req.method === "GET") return Response.json({ id: "ses_external", title: "External session" })
+      if (url.pathname === "/session/ses_external" && req.method === "PATCH") {
+        const body = await req.json() as { title?: string }
+        return Response.json({ id: "ses_external", title: body.title ?? "External session" })
+      }
+      if (url.pathname === "/session/ses_external" && req.method === "DELETE") {
+        deletedSessions.push("ses_external")
+        return Response.json(true)
+      }
       if (url.pathname === "/agent") return Response.json([{ name: "build", mode: "primary" }, { name: "plan", mode: "primary" }, { name: "hidden", mode: "primary", hidden: true }])
       if (url.pathname === "/config") return Response.json({ model: "demo/beta", default_agent: "plan", provider: { demo: { models: { alpha: { name: "Alpha" }, beta: { name: "Beta" } } } } })
       if (url.pathname === "/config/providers") return Response.json({ providers: [{ id: "demo", models: { alpha: { name: "Alpha" }, beta: { name: "Beta" } } }] })
@@ -424,6 +433,15 @@ test("sending to the brainstorming main node runs each child before the summary 
     expect((await (await fetch(`${base}/sessions/ses_external/attach`, {
       method: "POST", headers: { "content-type": "application/json" }, body: "{}",
     })).json() as { id: string }).id).toBe(attached.id)
+    const renamed = await (await fetch(`${base}/sessions/ses_external`, {
+      method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ title: "外部会话改名" }),
+    })).json() as { title: string }
+    expect(renamed.title).toBe("外部会话改名")
+    expect((await fetch(`${base}/sessions/ses_external`, {
+      method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ title: "  " }),
+    })).status).toBe(400)
+    expect((await (await fetch(`${base}/sessions/ses_external`, { method: "DELETE" })).json() as { deleted: boolean }).deleted).toBe(true)
+    expect(deletedSessions).toEqual(["ses_external"])
     const workspace = await (await fetch(`${base}/workspaces`, {
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "TUI test" }),
     })).json() as { id: string }

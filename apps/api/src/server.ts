@@ -735,6 +735,33 @@ const routes: Array<{
     },
   },
   {
+    // 重命名原生 OpenCode 会话（不改动已关联节点的标题）。
+    method: "PATCH",
+    pattern: /^\/sessions\/([^/]+)$/,
+    handler: async ({ params, body }) => {
+      const title = typeof body?.title === "string" ? body.title.trim() : ""
+      if (!title) return json({ error: "标题不能为空" }, 400)
+      try {
+        return json(await runtime.updateSession(params[0], { title }))
+      } catch (error) {
+        return json({ error: `重命名会话失败：${(error as Error).message}` }, 502)
+      }
+    },
+  },
+  {
+    // 删除原生 OpenCode 会话（已关联节点会由 reconcile 标记为会话缺失）。
+    method: "DELETE",
+    pattern: /^\/sessions\/([^/]+)$/,
+    handler: async ({ params }) => {
+      try {
+        await runtime.deleteSession(params[0])
+        return json({ deleted: true })
+      } catch (error) {
+        return json({ error: `删除会话失败：${(error as Error).message}` }, 502)
+      }
+    },
+  },
+  {
     // 原生会话 reconcile：标记图中已不存在的会话节点，并按 parentId 补齐 fork 血缘。
     method: "POST",
     pattern: /^\/sessions\/reconcile$/,

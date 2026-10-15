@@ -71,6 +71,20 @@ test("会话读取保留创建 / 更新时间供按日期浏览", async () => {
   ])
 })
 
+test("会话重命名调用原生 update 并归一化结果", async () => {
+  const client = fakeClient()
+  const calls: any[] = []
+  client.session.update = async (args: any) => {
+    calls.push(args)
+    return { data: { id: "ses_1", title: "新名字", time: { created: 1, updated: 2 } } }
+  }
+  const rt = new OpencodeRuntime({ client: client as any })
+  const session = await rt.updateSession("ses_1", { title: "新名字" })
+  assert.deepEqual(calls, [{ path: { id: "ses_1" }, body: { title: "新名字" } }])
+  assert.equal(session.title, "新名字")
+  assert.equal(session.created, 1)
+})
+
 test("保留 OpenCode 助手消息的完成信息", async () => {
   const client = fakeClient()
   client.session.messages = async () => ({ data: [{ info: { id: "done", role: "assistant", finish: "stop", time: { completed: 1234 } }, parts: [{ type: "text", text: "完成" }] }] })
