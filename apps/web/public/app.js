@@ -1527,6 +1527,17 @@ async function refreshRuntimeStatus() {
     for (const node of state.graph.nodes) {
       if (Object.hasOwn(data.activity ?? {}, node.id)) node.lastActiveAt = data.activity[node.id] ?? undefined
     }
+    // 轮询每 2 秒执行一次，但画布重绘很贵。只有「忙碌集合 / 可用性 / 活跃时间 / 待答问题」
+    // 发生变化时才重绘画布，避免空闲时也每 2 秒整屏重绘导致页面发卡。
+    const runtimeSig = JSON.stringify([
+      state.runtimeStatusAvailable,
+      [...state.runtimeStatus.keys()].sort(),
+      data.activity ?? {},
+      data.questionsAvailable !== false,
+      Object.keys(data.questions ?? {}),
+    ])
+    const statusChanged = runtimeSig !== state.runtimeStatusSig
+    state.runtimeStatusSig = runtimeSig
     for (const [nodeId, viewer] of contextWindows) {
       const node = state.nodesById.get(nodeId)
       setViewerAiRunning(viewer, viewerIsRunning(viewer))
@@ -1585,10 +1596,11 @@ async function refreshRuntimeStatus() {
       maybeGenerateNodeTitle(nodeId)
     }
     if (state.hoverNode) updateNodeHoverInfo(state.hoverNode)
-    draw()
+    if (statusChanged) draw()
   } catch {
     state.runtimeStatusAvailable = false
     state.runtimeStatus.clear()
+    state.runtimeStatusSig = undefined
     if (state.hoverNode) updateNodeHoverInfo(state.hoverNode)
     draw()
   }
@@ -3918,6 +3930,65 @@ function updateContextScrollButton(viewer) {
   button.hidden = !scrollable || nearBottom
 }
 
+/** 单条消息的 HTML（复用于整表渲染与增量渲染，避免两处模板漂移）。 */
+function contextMessageHtml(m, viewer) {
+  const hasText = Boolean(m.text.trim())
+  const checked = viewer.selectedMessageIds.has(m.id) ? "checked" : ""
+  const who = m.role === "user" ? "我" : "助手"
+  const ranges = hasText
+    ? `<button type="button" class="context-range-btn start" data-range="start" data-mid="${escapeHtml(m.id)}" title="从这条到最新；再点终点可限定区间" aria-label="从这条消息开始" aria-pressed="false">[</button><button type="button" class="context-range-btn" data-range="end" data-mid="${escapeHtml(m.id)}" title="从最早到这条；再点起点可限定区间" aria-label="到这条消息结束" aria-pressed="false">]</button>`
+    : ""
+  return `<div class="context-message ${m.role === "user" ? "user" : "assistant"}" data-mid="${escapeHtml(m.id)}">`
+    + `<div class="msg-role"><input type="checkbox" class="context-message-check" data-mid="${escapeHtml(m.id)}" data-empty="${!hasText}" aria-label="选择${who}的消息" ${checked} ${hasText ? "" : "disabled"} /><span>${who}</span>${ranges}</div>`
+    + (m.reasoning ? `<details class="thinking"><summary>思考过程</summary><pre class="thinking-text">${escapeHtml(m.reasoning)}</pre></details>` : "")
+    + `<div class="msg-text">${renderMarkdown(m.text)}</div></div>`
+}
+
+/**
+ * 消息内容签名：只有正文 / 思考 / 完成状态变化时才需要重建该条 DOM，
+ * 未变化的旧元素直接复用，避免长会话每次刷新都整段重渲染 Markdown（卡顿主因）。
+ */
+function messageSignature(m) {
+  const text = m.text ?? ""
+  const reasoning = m.reasoning ?? ""
+  return `${m.role}|${m.finish ?? ""}|${m.completedAt ?? ""}|${text.length}|${reasoning.length}|${text.slice(-24)}|${reasoning.slice(-16)}`
+}
+
+/** 按 id + 签名增量渲染消息列表：复用未变化项，替换变化项，追加新项，删除消失项。 */
+function renderContextMessages(viewer, container, messages) {
+  // 清掉流式期间乐观插入（无 data-mid）的临时节点，服务端数据已取代它们。
+  container.querySelectorAll(":scope > .context-message:not([data-mid])").forEach((el) => el.remove())
+  if (!messages.length) {
+    container.innerHTML = '<div class="muted">暂无对话消息</div>'
+    viewer.renderedMessageOrder = []
+    return
+  }
+  container.querySelector(":scope > .muted")?.remove()
+  const known = new Map()
+  for (const el of container.children) if (el.dataset?.mid) known.set(el.dataset.mid, el)
+  const kept = new Map()
+  const order = []
+  for (const m of messages) {
+    order.push(m.id)
+    const signature = messageSignature(m)
+    const existing = known.get(m.id)
+    if (existing && existing.dataset.sig === signature) { kept.set(m.id, existing); continue }
+    const holder = document.createElement("div")
+    holder.innerHTML = contextMessageHtml(m, viewer)
+    const fresh = holder.firstElementChild
+    fresh.dataset.sig = signature
+    if (existing) existing.replaceWith(fresh)
+    else container.appendChild(fresh)
+    fresh.querySelectorAll(".msg-text").forEach(linkifyText)
+    kept.set(m.id, fresh)
+  }
+  for (const [id, el] of known) if (!kept.has(id)) el.remove()
+  const previousOrder = viewer.renderedMessageOrder ?? []
+  const sameOrder = previousOrder.length === order.length && previousOrder.every((id, index) => id === order[index])
+  if (!sameOrder) for (const id of order) container.appendChild(kept.get(id))
+  viewer.renderedMessageOrder = order
+}
+
 async function reloadContextViewer(nodeId) {
   const viewer = contextWindows.get(nodeId)
   if (!viewer) return
@@ -3958,7 +4029,17 @@ async function reloadContextViewer(nodeId) {
     const pct = Math.min(100, Math.round((c.usedTokens / budget) * 100))
     const follow = body.scrollHeight - body.scrollTop - body.clientHeight < 96
     const scrollTop = body.scrollTop
-    body.innerHTML = `
+    if (!viewer.contextHeaderEl?.isConnected || !viewer.messagesEl?.isConnected) {
+      const head = document.createElement("div")
+      head.className = "context-head"
+      const list = document.createElement("div")
+      list.className = "context-messages"
+      body.replaceChildren(head, list)
+      viewer.contextHeaderEl = head
+      viewer.messagesEl = list
+      viewer.renderedMessageOrder = []
+    }
+    viewer.contextHeaderEl.innerHTML = `
       <div class="context-summary"><strong>上下文用量</strong><span class="muted">${c.usedTokens.toLocaleString()} / ${budget.toLocaleString()} tokens</span></div>
       <div class="ctx-bar"><span style="width:${pct}%"></span></div>
       <div class="context-head-meta">${[...byTier].map(([tier, tokens]) => `<span class="tier ${tier}">${tierLabel[tier] || escapeHtml(tier)} · ${tokens.toLocaleString()}t</span>`).join("")}</div>
@@ -3968,15 +4049,12 @@ async function reloadContextViewer(nodeId) {
       ${c.overlapNodeIds.length ? `<div class="meta">交叠节点：${c.overlapNodeIds.map((id) => escapeHtml(nodeTitle(id))).join("、")}</div>` : ""}
       ${c.dropped.length ? `<div class="context-drop">预算外未注入：${c.dropped.map((d) => `${escapeHtml(nodeTitle(d.nodeId))}（${tierLabel[d.tier] || escapeHtml(d.tier)}）`).join("、")}</div>` : ""}
       ${collaboration.workers.length ? `<section class="context-workers"><div class="section-title">子节点研究 · ${collaboration.workers.filter((worker) => worker.preview).length}/${collaboration.workers.length} 已完成</div>${collaboration.workers.map((worker) => `<div class="context-worker"><div><strong>${escapeHtml(worker.title)}</strong><span class="muted">${escapeHtml(worker.role)}</span></div><p>${escapeHtml(worker.preview || "尚未生成回复")}</p><button type="button" data-open-collab-node="${escapeHtml(worker.nodeId)}" aria-label="打开${escapeHtml(worker.title)}的会话">打开会话</button></div>`).join("")}</section>` : collaboration.mainNodeId && collaboration.mainNodeId !== nodeId ? `<button type="button" class="context-parent" data-open-collab-node="${escapeHtml(collaboration.mainNodeId)}">返回主节点</button>` : ""}
-      <div class="section-title context-group">会话历史 · ${messages.length} 条消息</div>
-      <div class="context-messages">
-       ${messages.map((m) => `<div class="context-message ${m.role === "user" ? "user" : "assistant"}" data-mid="${escapeHtml(m.id)}"><div class="msg-role"><input type="checkbox" class="context-message-check" data-mid="${escapeHtml(m.id)}" data-empty="${!m.text.trim()}" aria-label="选择${m.role === "user" ? "我" : "助手"}的消息" ${viewer.selectedMessageIds.has(m.id) ? "checked" : ""} ${m.text.trim() ? "" : "disabled"} /><span>${m.role === "user" ? "我" : "助手"}</span>${m.text.trim() ? `<button type="button" class="context-range-btn start" data-range="start" data-mid="${escapeHtml(m.id)}" title="从这条到最新；再点终点可限定区间" aria-label="从这条消息开始" aria-pressed="false">[</button><button type="button" class="context-range-btn" data-range="end" data-mid="${escapeHtml(m.id)}" title="从最早到这条；再点起点可限定区间" aria-label="到这条消息结束" aria-pressed="false">]</button>` : ""}</div>${m.reasoning ? `<details class="thinking"><summary>思考过程</summary><pre class="thinking-text">${escapeHtml(m.reasoning)}</pre></details>` : ""}<div class="msg-text">${renderMarkdown(m.text)}</div></div>`).join("") || '<div class="muted">暂无对话消息</div>'}
-      </div>
-    `
+      <div class="section-title context-group">会话历史 · ${messages.length} 条消息</div>`
+    renderContextMessages(viewer, viewer.messagesEl, messages)
     applyViewOptions(viewer)
-    body.querySelectorAll(".msg-text").forEach(linkifyText)
     updateContextExport(viewer)
     const loadError = detail.messagesError || c.error
+    body.querySelector(":scope > .context-load-error")?.remove()
     if (loadError) {
       const banner = document.createElement("div")
       banner.className = "msg error context-load-error"

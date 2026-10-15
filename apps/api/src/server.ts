@@ -506,24 +506,55 @@ function visibleMessageText(message: { role: string; parts: Array<{ type: string
 async function sessionTextOf(node: { opencodeSessionId?: string }): Promise<string> {
   if (!node?.opencodeSessionId) return ""
   const messages = await visibleMessages(node.opencodeSessionId)
+  return sessionTextFrom(messages)
+}
+
+/** 从已读取的会话原文拼接可见正文（避免重复读取会话）。 */
+function sessionTextFrom(messages: Awaited<ReturnType<typeof runtime.messages>>): string {
   return messages.map(visibleMessageText).filter(Boolean).join("\n\n")
 }
 
 /**
- * 过滤掉 OpenCode 原生 revert 之后的对话：
- * revert.messageID 指向被撤销的用户消息，该消息及其之后的内容都不应再出现在 UI 与上下文里。
+ * 最后一条消息缓存（TTL 较长）：仅供 /runtime/status 的「残留 busy」判定，
+ * 把长会话每 2 秒一次的全量读取降到约每 8 秒一次（长会话单次读取可达数 MB）。
+ * 任何会改写会话的操作都会清掉它，避免读到过期内容。
  */
+const lastMessageCache = new Map<string, { at: number; last: Awaited<ReturnType<typeof runtime.messages>>[number] | undefined }>()
+const LAST_MESSAGE_TTL_MS = 8000
+
+/** 会话内容可能已变化（prompt / 命令 / 撤销 / 压缩）时清缓存，保证随后读到最新。 */
+function invalidateMessages(sessionId: string | undefined): void {
+  if (!sessionId) return
+  lastMessageCache.delete(sessionId)
+}
+
+/** 过滤掉 OpenCode 原生 revert 之后的对话：
+ * revert.messageID 指向被撤销的用户消息，该消息及其之后的内容都不应再出现在 UI 与上下文里。 */
 async function visibleMessages(sessionId: string) {
-  const messages = await runtime.messages(sessionId)
-  let revertId: string | undefined
-  try {
-    revertId = (await runtime.getSession(sessionId)).revert?.messageID
-  } catch {
-    revertId = undefined
-  }
+  // 消息与会话信息（用于取原生 revert 落点）互相独立，并发读取以缩短长会话的等待。
+  const [messages, session] = await Promise.all([
+    runtime.messages(sessionId),
+    runtime.getSession(sessionId).catch(() => null),
+  ])
+  const revertId = session?.revert?.messageID
   if (!revertId) return messages
   const index = messages.findIndex((m) => m.id === revertId)
   return index >= 0 ? messages.slice(0, index) : messages
+}
+
+/** 只取最后一条（带缓存），供 /runtime/status 判断会话是否仍有残留 busy。 */
+async function lastVisibleMessage(sessionId: string) {
+  const now = Date.now()
+  const hit = lastMessageCache.get(sessionId)
+  if (hit && now - hit.at < LAST_MESSAGE_TTL_MS) return hit.last
+  const messages = await visibleMessages(sessionId)
+  const last = messages.at(-1)
+  lastMessageCache.set(sessionId, { at: now, last })
+  if (lastMessageCache.size > 64) {
+    const oldest = lastMessageCache.keys().next().value
+    if (oldest !== undefined) lastMessageCache.delete(oldest)
+  }
+  return last
 }
 
 /** 三层路由使用的全文：优先摘要，其次原始对话。 */
@@ -561,7 +592,11 @@ const STANDARD_THINK_LEVELS = ["low", "medium", "high", "xhigh", "max"]
 /** 结构化的完整对话，供 UI 逐条浏览与勾选。 */
 async function messagesOf(node: { opencodeSessionId?: string }) {
   if (!node?.opencodeSessionId) return []
-  const messages = await visibleMessages(node.opencodeSessionId)
+  return projectMessages(await visibleMessages(node.opencodeSessionId))
+}
+
+/** 把会话原文投影成 UI 需要的精简消息（正文 / 思考 / token / 完成状态）。 */
+function projectMessages(messages: Awaited<ReturnType<typeof runtime.messages>>) {
   return messages
     .map((m) => ({
       id: m.id,
@@ -1065,6 +1100,7 @@ const routes: Array<{
               } finally {
                 clearInterval(heartbeat)
                 unsubscribe()
+                invalidateMessages(node.opencodeSessionId)
                 try { controller.close() } catch { /* The browser disconnected. */ }
               }
             })()
@@ -1116,6 +1152,7 @@ const routes: Array<{
       const text = body.text ?? ""
       const model = resolveModel(body.model, node)
       const result = await runtime.prompt({ sessionId: node.opencodeSessionId, text, system: context || undefined, model, agent: nodeAgent(node), variant: nodeVariant(node) })
+      invalidateMessages(node.opencodeSessionId)
       const reply = await finalAssistantText(node.opencodeSessionId, result.text)
 
       store.patchNode(node.id, { tokenCount: node.tokenCount + estimate(context ? `${context}\n\n${text}` : text) })
@@ -1186,6 +1223,7 @@ const routes: Array<{
       if (!lastUser) return json({ error: "没有可撤销的用户消息" }, 400)
       const text = visibleMessageText(lastUser)
       await runtime.revert(node.opencodeSessionId, lastUser.id)
+      invalidateMessages(node.opencodeSessionId)
       return json({ undone: true, messageId: lastUser.id, text })
     },
   },
@@ -1197,6 +1235,7 @@ const routes: Array<{
       const node = store.node(params[0])
       if (!node?.opencodeSessionId) return json({ error: "节点未绑定运行时会话" }, 400)
       await runtime.unrevert(node.opencodeSessionId)
+      invalidateMessages(node.opencodeSessionId)
       return json({ unreverted: true })
     },
   },
@@ -1292,6 +1331,7 @@ const routes: Array<{
       const model = resolveModel(undefined, node) ?? await runtime.defaultModel()
       if (!model) return json({ error: "请选择模型后再压缩会话" }, 400)
       await runtime.compact(node.opencodeSessionId, model)
+      invalidateMessages(node.opencodeSessionId)
       return json({ compacted: true })
     },
   },
@@ -1410,11 +1450,14 @@ const routes: Array<{
       const graph = currentGraph()
       // 运行时偶发失败（会话被中断 / 上游 500）不应让整个节点读取失败，
       // 否则前端会把整段对话替换成错误、看不到历史上下文。
-      let messages: Awaited<ReturnType<typeof messagesOf>> = []
+      // 只读取一次会话原文，再同时派生「消息列表」与「详细信息」，
+      // 避免对同一个长会话重复拉取（实测一次可达数 MB / 数秒）。
+      let raw: Awaited<ReturnType<typeof runtime.messages>> = []
       let messagesError: string | undefined
-      try { messages = await messagesOf(node) } catch (error) { messagesError = (error as Error).message }
-      let detail = node.summaries.at(-1)?.text ?? ""
-      try { detail = await detailTextOf(node.id) } catch { /* 回退到摘要 */ }
+      try { raw = node.opencodeSessionId ? await visibleMessages(node.opencodeSessionId) : [] } catch (error) { messagesError = (error as Error).message }
+      const messages = projectMessages(raw)
+      const convo = sessionTextFrom(raw)
+      const detail = convo || node.summaries.at(-1)?.text || ""
       return json({
         node,
         workspaces: workspacesOf(graph, node.id).map((id) => {
@@ -1884,6 +1927,7 @@ const routes: Array<{
       if (params[2] === "reject") {
         const settled = await awaitQuestionSettled(request.id, runtime.rejectQuestion(request.id))
         if (!settled.ok) return goneOrError(settled.error)
+        invalidateMessages(node.opencodeSessionId)
         return json({ rejected: true })
       }
       const answers = body?.answers
@@ -1899,6 +1943,7 @@ const routes: Array<{
       }
       const settled = await awaitQuestionSettled(request.id, runtime.replyQuestion(request.id, answers))
       if (!settled.ok) return goneOrError(settled.error)
+      invalidateMessages(node.opencodeSessionId)
       return json({ replied: true })
     },
   },
@@ -1922,7 +1967,7 @@ const routes: Array<{
       if (pending) {
         await Promise.all(graph.nodes.filter((node) => node.opencodeSessionId && sessions[node.opencodeSessionId] && !questions.has(node.opencodeSessionId)).map(async (node) => {
           try {
-            const last = (await visibleMessages(node.opencodeSessionId!)).at(-1)
+            const last = await lastVisibleMessage(node.opencodeSessionId!)
             if (last?.role === "assistant" && last.finish === "stop" && last.completedAt && Date.now() - last.completedAt > 10000) {
               stale[node.opencodeSessionId!] = last.completedAt
               delete sessions[node.opencodeSessionId!]
