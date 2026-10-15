@@ -170,9 +170,37 @@ function refreshSessionStatuses(): Promise<void> {
   return statusRefresh
 }
 
+/**
+ * 网页端实时事件桥：把 OpenCode 的变更（会话状态、消息活动）即时推给浏览器，
+ * 让「在 OpenCode 里继续的会话」在 NodeX 窗口里自动刷新，而不必等 2 秒轮询。
+ * 只发送很轻的信号（会话 id + 状态 / 是否有变更），正文仍由前端按需重读。
+ */
+type WebEventClient = { send: (chunk: string) => void }
+const webEventClients = new Set<WebEventClient>()
+const webActivityAt = new Map<string, number>()
+function broadcastWebEvent(payload: unknown): void {
+  if (!webEventClients.size) return
+  const chunk = `data: ${JSON.stringify(payload)}\n\n`
+  for (const client of [...webEventClients]) {
+    try { client.send(chunk) } catch { webEventClients.delete(client) }
+  }
+}
+
 void runtime.subscribe((event) => {
-  if (event.type !== "session-status") return
-  recordSessionStatus(event.sessionId, isSessionActive({ type: event.status }))
+  if (event.type === "session-status") {
+    recordSessionStatus(event.sessionId, isSessionActive({ type: event.status }))
+    broadcastWebEvent({ type: "session-status", sessionId: event.sessionId, status: event.status })
+    return
+  }
+  // 其它事件（正文/思考/工具）只做一个按会话节流的「有变更」信号，避免高频推送正文。
+  const now = Date.now()
+  if (now - (webActivityAt.get(event.sessionId) ?? 0) < 500) return
+  webActivityAt.set(event.sessionId, now)
+  if (webActivityAt.size > 512) {
+    const oldest = webActivityAt.keys().next().value
+    if (oldest !== undefined) webActivityAt.delete(oldest)
+  }
+  broadcastWebEvent({ type: "activity", sessionId: event.sessionId })
 })
 void refreshSessionStatuses()
 const statusPoll = setInterval(() => { void refreshSessionStatuses() }, 2000)
@@ -1983,6 +2011,39 @@ const routes: Array<{
         questions: Object.fromEntries(graph.nodes.filter((node) => node.opencodeSessionId && questions.has(node.opencodeSessionId)).map((node) => [node.id, questions.get(node.opencodeSessionId!) ])),
         activity: Object.fromEntries(graph.nodes.map((node) => [node.id, node.lastActiveAt ?? null])),
         updatedAt: Date.now(),
+      })
+    },
+  },
+  {
+    // 网页端实时事件桥（SSE）：转发 OpenCode 变更的轻量信号，供前端即时刷新会话窗。
+    method: "GET",
+    pattern: /^\/events$/,
+    handler: () => {
+      const encoder = new TextEncoder()
+      let client: WebEventClient | undefined
+      let heartbeat: ReturnType<typeof setInterval> | undefined
+      const stream = new ReadableStream({
+        start(controller) {
+          client = { send: (chunk: string) => controller.enqueue(encoder.encode(chunk)) }
+          webEventClients.add(client)
+          try { controller.enqueue(encoder.encode(": connected\n\n")) } catch { /* 立即断开 */ }
+          heartbeat = setInterval(() => {
+            try { controller.enqueue(encoder.encode(": ping\n\n")) } catch { /* 连接已关闭 */ }
+          }, 15000)
+          heartbeat.unref?.()
+        },
+        cancel() {
+          if (heartbeat) clearInterval(heartbeat)
+          if (client) webEventClients.delete(client)
+        },
+      })
+      return new Response(stream, {
+        headers: {
+          "content-type": "text/event-stream; charset=utf-8",
+          "cache-control": "no-cache",
+          connection: "keep-alive",
+          "access-control-allow-origin": "*",
+        },
       })
     },
   },

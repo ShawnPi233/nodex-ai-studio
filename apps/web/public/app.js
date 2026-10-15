@@ -1606,6 +1606,44 @@ async function refreshRuntimeStatus() {
   }
 }
 
+/**
+ * 实时事件桥：订阅服务端 `/events`，当 OpenCode 端（TUI 或其它客户端）让某会话
+ * 产生消息或状态变化时，立即刷新对应的打开窗口，而不是等 2 秒轮询。
+ * 自己正在发送（sendingNodes）的窗口由流式输出直接更新，这里跳过以免冲突。
+ */
+const EVENT_RELOAD_INTERVAL = 1500
+function startEventBridge() {
+  if (typeof window.EventSource !== "function") return
+  const pending = new Map()
+  const scheduleReload = (nodeId) => {
+    if (sendingNodes.has(nodeId) || pending.has(nodeId)) return
+    pending.set(nodeId, setTimeout(() => {
+      pending.delete(nodeId)
+      if (contextWindows.has(nodeId)) void reloadContextViewer(nodeId)
+    }, EVENT_RELOAD_INTERVAL))
+  }
+  const reloadWatchers = (sessionId) => {
+    for (const [nodeId, viewer] of contextWindows) {
+      if (viewer && state.nodesById.get(nodeId)?.opencodeSessionId === sessionId) scheduleReload(nodeId)
+    }
+  }
+  const source = new EventSource("/api/events")
+  source.onmessage = (event) => {
+    let payload
+    try { payload = JSON.parse(event.data) } catch { return }
+    if (!payload?.sessionId) return
+    if (payload.type === "session-status") {
+      // 状态变化立即同步活动环，不必等下一次轮询。
+      void refreshRuntimeStatus()
+      if (payload.status === "idle") reloadWatchers(payload.sessionId)
+      return
+    }
+    if (payload.type === "activity") reloadWatchers(payload.sessionId)
+  }
+  // EventSource 会自动重连，这里无需额外处理错误。
+  return source
+}
+
 /** 给被中断的尾部助手消息加「已中断」标记（幂等）。 */
 function markMessageAborted(viewer, messageId) {
   const message = viewer.querySelector(`.context-message[data-mid="${CSS.escape(messageId)}"]`)
@@ -10377,6 +10415,7 @@ loadCommands()
 loadTemplates().catch(() => {})
 refreshRuntimeStatus()
 setInterval(refreshRuntimeStatus, 2000)
+startEventBridge()
 refresh().then(() => restoreWindowSession()).catch((error) => {
   statusEl.textContent = "连接失败: " + error.message
 })
